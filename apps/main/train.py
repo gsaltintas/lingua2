@@ -226,6 +226,8 @@ def every_n_steps(train_state, freq, acc_step=None, acc_freq=None):
 def train(args: TrainArgs):
     with ExitStack() as context_stack:
         tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path)
+        if args.data.tokenizer.n_words is not None:
+            tokenizer.n_words = args.data.tokenizer.n_words
         validate_train_args(
             args,
             tokenizer.n_words,

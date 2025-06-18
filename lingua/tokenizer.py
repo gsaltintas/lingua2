@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class TokenizerArgs:
     name: str = "bytes"
     path: Optional[str] = None
+    n_words: Optional[int] = None
 
 
 class Tokenizer(abc.ABC):
