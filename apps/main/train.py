@@ -24,7 +24,12 @@ from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed._tensor import DTensor
 
 from lingua.args import dataclass_from_dict, dump_config, flatten_dict
-from lingua.checkpoint import CheckpointArgs, CheckpointManager, load_from_checkpoint
+from lingua.checkpoint import (
+    CheckpointArgs,
+    CheckpointManager,
+    load_from_checkpoint,
+    consolidate_checkpoints,
+)
 from lingua.data import (
     DataArgs,
     PackTokensState,
@@ -316,13 +321,15 @@ def train(args: TrainArgs):
         checkpoint.load(model, optimizer, train_state, world_mesh)
 
         if args.checkpoint.save_init_ckpt:
-            _ = checkpoint.save(
-                model,
-                optimizer,
-                train_state,
-                args,
-                device_mesh=world_mesh,
-            )
+            if checkpoint.save(
+                    model,
+                    optimizer,
+                    train_state,
+                    args,
+                    device_mesh=world_mesh,
+                ):
+                _ = consolidate_checkpoints(str(checkpoint.existing_saves[-1]))
+
 
         # Either load from latest checkpoint or start from scratch
         if args.probe_freq is not None:
