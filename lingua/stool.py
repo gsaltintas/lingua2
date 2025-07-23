@@ -22,21 +22,21 @@ class StoolArgs:
         True  # Wether to copy new code and config and run regardless that dir exists
     )
     override: bool = False  # Wether to delete dump dir and restart
-    nodes: int = 8  # The number of nodes to run the job on.
+    nodes: int = 1  # The number of nodes to run the job on.
     ngpu: int = 8  # The number of GPUs required per node.
     ncpu: int = 16  # The number of CPUs allocated per task.
     mem: str = ""  # The amount of memory to allocate.
     anaconda: str = "default"  # The path to the anaconda environment.
     constraint: str = ""  # The constraint on the nodes.
     exclude: str = ""  # The nodes to exclude.
-    time: int = 60000  # The time limit of the job (in minutes).
+    time: int = 1800  # The time limit of the job (in minutes).
     account: str = ""
     qos: str = ""
     partition: str = "hopper-prod"
     stdout: bool = False
     priority: str = "normal"
-    # data_dir: str = "/fsx/craffel/common-pile-chunked/"
-    data_dir = str = "s3://common-pile-chunked/"
+    data_dir: str = "/fsx/craffel/lingua/data/"
+    # data_dir = str = "s3://common-pile-chunked/"
 
 
 SBATCH_COMMAND = """#!/bin/bash
