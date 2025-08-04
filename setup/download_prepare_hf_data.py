@@ -12,25 +12,6 @@ import requests
 from botocore.exceptions import ClientError
 from huggingface_hub import snapshot_download, HfApi
 
-num_proc = 16
-s3 = boto3.client("s3")
-bucket_name = "softwareheritage"
-
-
-def download_contents(blob_id):
-    key = f"content/{blob_id}"
-    try:
-        obj = s3.get_object(Bucket=bucket_name, Key=key)
-        with gzip.GzipFile(fileobj=obj["Body"]) as fin:
-            content = fin.read().decode("utf-8", errors="ignore")
-        return {"text": content, "download_success": True}
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "NoSuchKey":
-            print(f"File not found: {key}")
-            return {"text": "", "download_success": False}
-        else:
-            raise
-
 
 def run_command(command):
     print(f"Running: {command}")
@@ -38,7 +19,7 @@ def run_command(command):
 
 
 def download_dataset(repo_id, local_dir, allow_patterns):
-    print(f"Downloading dataset from {repo_id}...")
+    print(f"Downloading dataset from {repo_id} into {local_dir}...")
     max_retries = 5
     retry_delay = 10  # seconds
     for attempt in range(max_retries):
@@ -60,14 +41,48 @@ def download_dataset(repo_id, local_dir, allow_patterns):
                 raise
     print(f"Dataset downloaded to {local_dir}")
 
+def adapter_func(self, data: dict, path: str, id_in_file: int | str):
+    """
+    The default data adapter to adapt input data into the datatrove Document format
 
+    Args:
+        data: a dictionary with the "raw" representation of the data
+        path: file path or source for this sample
+        id_in_file: its id in this particular file or source
 
+    Returns: a dictionary with text, id, media and metadata fields
+
+    """
+    metadata = data.pop("metadata", {})
+    if isinstance(metadata, str):
+        import json
+
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            pass
+    if not isinstance(metadata, dict):
+        metadata = {"metadata": metadata}
+    if "embeddings" in data:
+        data.pop("embeddings", None)
+
+    return {
+        "text": data.pop(self.text_key, ""),
+        "id": data.pop(self.id_key, f"{path}/{id_in_file}"),
+        "media": data.pop("media", []),
+        "metadata": metadata | data,  # remaining data goes into metadata
+    }
+    
 def parquet_to_jsonl(
     dataset, work_dir, src_dir, tgt_dir, ntasks=64, preserve_subsets=False
 ):
     from datatrove.executor import LocalPipelineExecutor
     from datatrove.pipeline.readers import ParquetReader
     from datatrove.pipeline.writers import JsonlWriter
+
+    adapter = None
+    if "fineweb_2_hq" in dataset:
+        adapter = adapter_func
 
     if preserve_subsets:
         subsets = os.listdir(f"{src_dir}")
@@ -79,13 +94,13 @@ def parquet_to_jsonl(
             if subset in [".cache", ".git", ".github", "datatrove", "terashuf"]:
                 continue
             print(f"Processing subset: {subset}")
-            # pipe.extend(
             pipe = [
                 ParquetReader(
                     f"{src_dir}/{subset}/",
                     file_progress=True,
                     doc_progress=True,
                     glob_pattern="**/*.parquet",
+                    adapter=adapter,
                 ),
                 JsonlWriter(
                     tgt_dir,
@@ -97,7 +112,6 @@ def parquet_to_jsonl(
                 pipeline=pipe,
                 tasks=ntasks,
                 logging_dir=os.path.join(work_dir, "datatrove", subset),
-                # skip_completed=False,
             )
             pipeline_exec.run()
         return
@@ -108,6 +122,7 @@ def parquet_to_jsonl(
                 file_progress=True,
                 doc_progress=True,
                 glob_pattern="**/*.parquet",
+                adapter=adapter,
             ),
             JsonlWriter(
                 tgt_dir,
@@ -125,7 +140,7 @@ def parquet_to_jsonl(
 def setup_terashuf(work_dir):
     terashuf_dir = os.path.join(work_dir, "terashuf")
     terashuf_executable = os.path.join(terashuf_dir, "terashuf")
-
+    print(terashuf_executable)
     if os.path.exists(terashuf_executable):
         print("terashuf executable already exists. Skipping setup.")
         return terashuf_dir
@@ -135,32 +150,20 @@ def setup_terashuf(work_dir):
     run_command(f"make -C {terashuf_dir}")
     return terashuf_dir
 
-def upload_dataset_to_hf(dataset, out_dir, hf_path, preserve_subsets):
-    api = HfApi()
-    
-    if preserve_subsets:
-        for subset in os.listdir(f"{out_dir}"):
-            # skip the non data directories
-            if not os.path.isdir(f"{out_dir}/{subset}"):
-                continue
-            if subset in [".cache", ".git", ".github", "datatrove", "terashuf"]:
-                continue
-            api.upload_folder(
-                repo_id=hf_path,
-                folder_path=f"{out_dir}/{subset}",
-                repo_type="dataset",
-                path_in_repo=f"{subset}",
-                allow_patterns=["*.jsonl"],
-            )
-    else:
-        api.upload_folder(
-            repo_id=hf_path,
-            folder_path=f"{out_dir}",
-            repo_type="dataset",
-            allow_patterns=["*.jsonl"],
-        )
 
-def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False, upload_to_hf=False, hf_path=None, max_file_size=None, skip_download=False):
+def main(
+    dataset,
+    memory,
+    data_dir,
+    seed=42,
+    nchunks=32,
+    preserve_subsets=False,
+    upload_to_hf=False,
+    hf_path=None,
+    max_file_size=None,
+    skip_download=False,
+    k_validation=10000,
+):
     # Configuration
     repo_id = {
         "fineweb_edu": "HuggingFaceFW/fineweb-edu",
@@ -222,17 +225,16 @@ def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False,
             "data/cmn_Hani/*/000_0000[012].parquet",
         ],
         "fineweb_2_hq": [
-            "ita_Latn/*",  
-            # "tur_Latn/*",  
-            # "fas_Arab/*",  
-            # "cmn_Hani/*",  
+            "ita_Latn/*",
+            "tur_Latn/*",
+            "fas_Arab/*",
+            "cmn_Hani/*",
         ],
         "stack_edu": "*.json.gz",
         "dclm_baseline_1.0": "*.jsonl.zst",
         "dclm_baseline_1.0_10prct": "global-shard_01_of_10/*.jsonl.zst",
     }[dataset]
     suffix = ".jsonl"
-    k_validation = 10000  # Number of lines to take from each chunk for validation
 
     # Setup terashuf
     terashuf_dir = setup_terashuf(work_dir)
@@ -242,8 +244,9 @@ def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False,
         download_dataset(repo_id, src_dir, allow_patterns)
     else:
         orig_extension = ".jsonl"
-        print("Skipping download of dataset, make sure the dataset or jsonl files are present in the data directory")
-
+        print(
+            "Skipping download of dataset, make sure the dataset or jsonl files are present in the data directory"
+        )
     if "fineweb" in dataset:
         parquet_to_jsonl(
             dataset, work_dir, src_dir, src_dir, preserve_subsets=preserve_subsets
@@ -256,7 +259,7 @@ def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False,
     # Run the original shuffling and splitting command
     terashuf_executable = os.path.join(terashuf_dir, "terashuf")
     print(orig_extension, src_dir, cat_command, terashuf_executable)
-    
+
     if preserve_subsets:
         for subset in os.listdir(f"{src_dir}"):
             # skip the non data directories
@@ -268,25 +271,35 @@ def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False,
             # Create validation set and remove lines from chunks
             validation_file = f"{out_dir}/{subset}/{dataset}.{subset}.val{suffix}"
             run_command(f"mkdir -p {out_dir}/{subset} ")
-            run_command(f"ulimit -n 100000")
             run_command(
-                    f"find {src_dir} -type f -name '*{subset}*{orig_extension}' -print0 | xargs -0 -I {{}} sh -c '{cat_command}' | {terashuf_executable} | "
-                    f" split -n l/{nchunks}  -d --suffix-length 2 --additional-suffix {suffix} - {out_dir}/{subset}/{prefix}"
-                    "; trap 'echo \"Caught signal 13, exiting with code 1\"; exit 1' PIPE;"
-                )
+                f"ulimit -n 100000 "
+                f"find {src_dir} -type f -name '*{subset}*{orig_extension}' -print0 | xargs -0 -I {{}} sh -c '{cat_command}' | {terashuf_executable} | "
+                f" split -n l/{nchunks}  -d --suffix-length 2 --additional-suffix {suffix} - {out_dir}/{subset}/{prefix}"
+                "; trap 'echo \"Caught signal 13, exiting with code 1\"; exit 1' PIPE;"
+            )
             for i in range(nchunks):
                 chunk_file = f"{out_dir}/{subset}/{prefix}{i:02d}{suffix}"
                 run_command(f"head -n {k_validation} {chunk_file} >> {validation_file}")
-                run_command(f"sed -i '1,{k_validation}d' {chunk_file}")
+                run_command(f"tail -n +{k_validation + 1} {chunk_file} > {chunk_file}.tmp && mv {chunk_file}.tmp {chunk_file}")
                 if max_file_size:
-                    run_command(f"truncate -s {max_file_size} {chunk_file}")
+                    # If file is larger than max_file_size, truncate it and remove the last line
+                    run_command(f"""
+                        if [ $(stat -c%s {chunk_file}) -gt {max_file_size} ]; then
+                            truncate -s {max_file_size} {chunk_file}
+                            tail -n 1 {chunk_file} | wc -c | xargs -I {{}} truncate {chunk_file} -s -{{}}
+                        fi
+                    """)
+            if upload_to_hf:
+                print("Uploading to Hugging Face...")
+                run_command(
+                    f"cd {out_dir}/{subset} && ls *.jsonl | parallel -j 4 --line-buffer 'echo {{}}; huggingface-cli upload {hf_path} {{}} {subset}/{{}} --repo-type dataset'"
+                )
     else:
         run_command(
             f"ulimit -n 100000 && "
             f"find {src_dir} -type f -name '*{orig_extension}' -print0 | xargs -0 -I {{}} sh -c '{cat_command}' | {terashuf_executable} | "
             f" split -n l/{nchunks}  -d --suffix-length 2 --additional-suffix {suffix} - {out_dir}/{prefix}"
             "; trap 'echo \"Caught signal 13, exiting with code 1\"; exit 1' PIPE;"
-            # "; trap 'echo \"Caught signal 13, exiting with code 1\"; exit 1' SIGPIPE;"
         )
 
         # Create validation set and remove lines from chunks
@@ -294,14 +307,22 @@ def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False,
         for i in range(nchunks):
             chunk_file = f"{out_dir}/{prefix}{i:02d}{suffix}"
             run_command(f"head -n {k_validation} {chunk_file} >> {validation_file}")
-            run_command(f"sed -i '1,{k_validation}d' {chunk_file}")
+            run_command(f"tail -n +{k_validation + 1} {chunk_file} > {chunk_file}.tmp && mv {chunk_file}.tmp {chunk_file}")
             if max_file_size:
-                run_command(f"truncate -s {max_file_size} {chunk_file}")
+                # If file is larger than max_file_size, truncate it and remove the last line
+                run_command(f"""
+                    if [ $(stat -c%s {chunk_file}) -gt {max_file_size} ]; then
+                        truncate -s {max_file_size} {chunk_file}
+                        tail -n 1 {chunk_file} | wc -c | xargs -I {{}} truncate {chunk_file} -s -{{}}
+                    fi
+                """)
+        if upload_to_hf:
+            print("Uploading to Hugging Face...")
+            run_command(
+                f"ls {out_dir}/*.jsonl | parallel -j 4 --line-buffer 'echo {{}}; huggingface-cli upload {hf_path} {{}} {{}} --repo-type dataset'"
+            )
 
     print("All tasks completed successfully!")
-    if upload_to_hf:
-        print("Uploading to Hugging Face...")
-        upload_dataset_to_hf(dataset, out_dir, hf_path, preserve_subsets)
 
 
 if __name__ == "__main__":
@@ -311,7 +332,13 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--nchunks", type=int, default=32)
-    parser.add_argument("--max_file_size", type=str, default=None, help="If specified, the dataset will be truncated to match this file size, e.g. 45G")
+    parser.add_argument("--k_validation", type=int, default=10000)
+    parser.add_argument(
+        "--max_file_size",
+        type=str,
+        default=None,
+        help="If specified, the dataset will be truncated to match this file size, e.g. 45G",
+    )
     parser.add_argument(
         "--preserve_subsets",
         action="store_true",
@@ -325,17 +352,6 @@ if __name__ == "__main__":
     if args.upload_to_hf:
         if args.hf_path is None:
             raise ValueError("hf_path is required when upload_to_hf is true")
-        try:
-            api = HfApi()
-            if not api.repo_exists(args.hf_path):
-                api.create_repo(args.hf_path, repo_type="dataset")
-            else:
-                print(f"Repository {args.hf_path} already exists, skipping creation")
-        except Exception as e:
-            print(f"Error creating repository: {e}")
-            print("Please ensure you have the correct permissions to create the repository.")
-            raise
-        
 
     main(
         args.dataset,
@@ -348,4 +364,5 @@ if __name__ == "__main__":
         args.hf_path,
         args.max_file_size,
         args.skip_download,
+        args.k_validation,
     )
