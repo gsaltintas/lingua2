@@ -35,7 +35,7 @@ class StoolArgs:
     partition: str = "hopper-prod"
     stdout: bool = False
     priority: str = "normal"
-    data_dir: str = "/fsx/craffel/lingua/data/"
+    data_dir: str = "/fsx/craffel/lingua/data/tokenizer_training/"
     # data_dir = str = "s3://common-pile-chunked/"
 
 
