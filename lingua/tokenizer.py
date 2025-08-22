@@ -126,6 +126,11 @@ DEFAULT_TIKTOKEN_SPECIAL_TOKENS = {
     "<|fim_suffix|>": 255,
 }
 TIKTOKEN_MAX_ENCODE_CHARS = 400_000
+DEFAULT_SPECIAL_TOKENS = {
+    "bos": ["<|begin_of_text|>", "<s>", "<bos>"],
+    "eos": ["<|end_of_text|>", "</s>", "<eos>"],
+    "pad": ["<pad>"],
+}
 
 
 class TikTokenTokenizer(Tokenizer):
@@ -273,9 +278,9 @@ class HFTokenizer(Tokenizer):
         # tokenizers.Tokenizer which doesn't auto add them.
         encoded = self.hf_tokenizer.encode(s, add_special_tokens=False).ids
         # Add bos/eos as needed, easy because we are not processing batches.
-        if add_bos:
+        if add_bos and self.bos_id:
             encoded = [self.bos_id] + encoded
-        if add_eos:
+        if add_eos and self.eos_id:
             encoded = encoded + [self.eos_id]
         return encoded
 
@@ -299,6 +304,104 @@ class HFTokenizer(Tokenizer):
         # fact that tokenizers uses Ġ instead of space.
         substrs = [text[s:e] for s, e in encoding.offsets]
         return substrs, encoding.offsets
+
+
+class ByT5HFTokenizer(HFTokenizer):
+
+    def __init__(self, model_path: str) -> None:
+        import transformers
+        self.hf_tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
+        self.bos_token = self.hf_tokenizer.pad_token
+        self.eos_token = self.hf_tokenizer.eos_token
+        self.bos_id = self.hf_tokenizer.convert_tokens_to_ids(self.bos_token)
+        self.eos_id = self.hf_tokenizer.convert_tokens_to_ids(self.eos_token)
+
+        self.n_words = self.hf_tokenizer.vocab_size
+
+        logger.info(
+            "#words: %d - BOS ID: %d - EOS ID: %d",
+            self.n_words,
+            self.bos_id,
+            self.eos_id,
+        )
+
+    def encode(self, s: str, add_bos: bool, add_eos: bool):
+        """Convert a string to a list of tokens."""
+        # Never add bos/eos special tokens because we are using a
+        # tokenizers.Tokenizer which doesn't auto add them.
+        encoded = self.hf_tokenizer.encode(s, add_special_tokens=False)
+        # Add bos/eos as needed, easy because we are not processing batches.
+        if add_bos and self.bos_id:
+            encoded = [self.bos_id] + encoded
+        if add_eos and self.eos_id:
+            encoded = encoded + [self.eos_id]
+        return encoded
+
+    def get_token_offsets(
+        self, text: str, tokens: Optional[List[int]] = None
+    ) -> Tuple[List[str], List[int]]:
+        """Get the offsets (and surface) for each token in the original string."""
+        return None, None
+
+
+class SimplifiedHFTokenizer(HFTokenizer):
+
+    def __init__(self, model_path: str) -> None:
+        import transformers
+        # Try to load as a transformers.Tokenizer as it includes more
+        # information about things like bos/eos
+        transformers_tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_path
+        )
+        logger.info("Loaded Transformers Tokenizer from %s", model_path)
+        # Extract the underlying tokenizers.Tokenizer to get access to things
+        # like the offests.
+        self.hf_tokenizer = transformers_tokenizer._tokenizer
+        logger.info(
+            "Extracted Tokenizers Tokenizer from Transformers Tokenizer"
+        )
+
+        special_tokens = getattr(transformers_tokenizer, "special_tokens_map", {})
+        if "bert" in model_path:
+            self.bos_token = special_tokens.get("cls_token")
+        elif "t5" in model_path:
+            self.bos_token = special_tokens.get("pad_token")
+        else:
+            self.bos_token = special_tokens.get("bos_token")
+        logger.info(
+            "Found bos_token: %s based on Transformers Tokenizer.", self.bos_token
+        )
+        if self.bos_token is not None:
+            self.bos_id = transformers_tokenizer.convert_tokens_to_ids(self.bos_token)
+        else:
+            self.bos_id = None
+        logger.info(
+            "Found bos_id: %s based on Transformers Tokenizer.", self.bos_id
+        )
+
+        if "bert" in model_path:
+            self.eos_token = special_tokens.get("pad_token")
+        else:
+            self.eos_token = special_tokens.get("eos_token")
+        logger.info(
+            "Found eos_token: %s based on Transformers Tokenizer.", self.eos_token
+        )
+        if self.eos_token is not None:
+            self.eos_id = transformers_tokenizer.convert_tokens_to_ids(self.eos_token)
+        else:
+            self.eos_id = None
+        logger.info(
+            "Found eos_id: %s based on Transformers Tokenizer.", self.eos_id
+        )
+
+        self.n_words = self.hf_tokenizer.get_vocab_size()
+
+        logger.info(
+            "#words: %d - BOS ID: %d - EOS ID: %d",
+            self.n_words,
+            self.bos_id,
+            self.eos_id,
+        )
 
 
 class TokenMonsterTokenizer(Tokenizer):
@@ -371,8 +474,10 @@ def build_tokenizer(name: str, path: Optional[str] = None) -> Tokenizer:
         return SentencePieceTokenizer(path)
     elif name == "tiktoken":
         return TikTokenTokenizer(path)
+    elif name == "huggingface" and "byt5" in path:
+        return ByT5HFTokenizer(path)
     elif name == "huggingface":
-        return HFTokenizer(path)
+        return SimplifiedHFTokenizer(path)
     elif name == "tokenmonster":
         return TokenMonsterTokenizer(path)
     elif name == "tekken":
