@@ -278,9 +278,9 @@ class HFTokenizer(Tokenizer):
         # tokenizers.Tokenizer which doesn't auto add them.
         encoded = self.hf_tokenizer.encode(s, add_special_tokens=False).ids
         # Add bos/eos as needed, easy because we are not processing batches.
-        if add_bos and self.bos_id:
+        if add_bos and self.bos_id is not None:
             encoded = [self.bos_id] + encoded
-        if add_eos and self.eos_id:
+        if add_eos and self.eos_id is not None:
             encoded = encoded + [self.eos_id]
         return encoded
 
@@ -331,9 +331,9 @@ class ByT5HFTokenizer(HFTokenizer):
         # tokenizers.Tokenizer which doesn't auto add them.
         encoded = self.hf_tokenizer.encode(s, add_special_tokens=False)
         # Add bos/eos as needed, easy because we are not processing batches.
-        if add_bos and self.bos_id:
+        if add_bos and self.bos_id is not None:
             encoded = [self.bos_id] + encoded
-        if add_eos and self.eos_id:
+        if add_eos and self.eos_id is not None:
             encoded = encoded + [self.eos_id]
         return encoded
 
