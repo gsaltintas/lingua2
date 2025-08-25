@@ -1,15 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import abc
+import logging
+import os
 from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple, Sequence
-import logging
-import os
+from typing import List, Optional, Sequence, Tuple
 
-from sentencepiece import SentencePieceProcessor
 import tiktoken
+from sentencepiece import SentencePieceProcessor
 from tiktoken.load import load_tiktoken_bpe
 
 logger = logging.getLogger(__name__)
@@ -131,27 +131,24 @@ DEFAULT_SPECIAL_TOKENS = {
     "pad": ["<pad>"],
 }
 
-
 class TikTokenTokenizer(Tokenizer):
 
     def __init__(self, model_path: str) -> None:
-        mergeable_ranks = load_tiktoken_bpe(model_path)
-        all_special_tokens_with_ids = copy(DEFAULT_TIKTOKEN_SPECIAL_TOKENS)
-        missing_ids = set(range(256)) - set(all_special_tokens_with_ids.values())
-        for id in missing_ids:
-            all_special_tokens_with_ids[f"<|reserved_special_token_{id}|>"] = id
-        for name in all_special_tokens_with_ids:
-            all_special_tokens_with_ids[name] += len(mergeable_ranks)
+        all_special_tokens_with_ids = dict()
 
-        self.tkt_model = tiktoken.core.Encoding(
-            name=Path(model_path).stem,
-            pat_str=DEFAULT_TIKTOKEN_PATTERN,
-            mergeable_ranks=mergeable_ranks,
-            special_tokens=all_special_tokens_with_ids,
-        )
+        try:
+            self.tkt_model = tiktoken.encoding_for_model(model_path)
+        except:
+            mergeable_ranks = load_tiktoken_bpe(model_path)
+            self.tkt_model = tiktoken.core.Encoding(
+                name=Path(model_path).stem,
+                pat_str=DEFAULT_TIKTOKEN_PATTERN,
+                mergeable_ranks=mergeable_ranks,
+                special_tokens=all_special_tokens_with_ids,
+            )
 
-        self.bos_id: int = self.tkt_model.encode_single_token("<|begin_of_text|>")
-        self.eos_id: int = self.tkt_model.encode_single_token("<|end_of_text|>")
+        self.bos_id: int = None
+        self.eos_id: int = None
 
         self.n_words: int = self.tkt_model.n_vocab
 
@@ -165,11 +162,7 @@ class TikTokenTokenizer(Tokenizer):
         subs = []
         for i in range(0, len(s), TIKTOKEN_MAX_ENCODE_CHARS):
             subs.append(s[i : i + TIKTOKEN_MAX_ENCODE_CHARS])
-        return (
-            [self.bos_id] * add_bos
-            + sum(self.tkt_model.encode_ordinary_batch(subs), start=[])
-            + [self.eos_id] * add_eos
-        )
+        return sum(self.tkt_model.encode_ordinary_batch(subs), start=[])
 
     def decode(self, tokens: List[int]):
         return self.tkt_model.decode(tokens)
@@ -190,7 +183,6 @@ class TikTokenTokenizer(Tokenizer):
             text_len += sum(1 for c in token if not 0x80 <= c < 0xC0)
         substrs = [text[s:e] for s, e in zip(offsets, offsets[1:] + [None])]
         return substrs, offsets
-
 
 def find_id(tokenizer, surfaces: Sequence[str]):
     """Look through surfaces to see if any are in the tokenizer's vocab."""
