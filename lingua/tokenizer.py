@@ -134,11 +134,17 @@ DEFAULT_SPECIAL_TOKENS = {
 class TikTokenTokenizer(Tokenizer):
 
     def __init__(self, model_path: str) -> None:
-        all_special_tokens_with_ids = dict()
-
         try:
             self.tkt_model = tiktoken.encoding_for_model(model_path)
         except:
+            mergeable_ranks = load_tiktoken_bpe(model_path)
+            all_special_tokens_with_ids = copy(DEFAULT_TIKTOKEN_SPECIAL_TOKENS)
+            missing_ids = set(range(256)) - set(all_special_tokens_with_ids.values())
+            for id in missing_ids:
+                all_special_tokens_with_ids[f"<|reserved_special_token_{id}|>"] = id
+            for name in all_special_tokens_with_ids:
+                all_special_tokens_with_ids[name] += len(mergeable_ranks)
+            logger.error(f"Failed to load TikToken model from {model_path}")
             mergeable_ranks = load_tiktoken_bpe(model_path)
             self.tkt_model = tiktoken.core.Encoding(
                 name=Path(model_path).stem,
@@ -147,8 +153,11 @@ class TikTokenTokenizer(Tokenizer):
                 special_tokens=all_special_tokens_with_ids,
             )
 
-        self.bos_id: int = None
-        self.eos_id: int = None
+        try:
+            self.bos_id: int = self.tkt_model.encode_single_token("<|begin_of_text|>")
+        except:
+            self.bos_id: int = None
+        self.eos_id: int = self.tkt_model.encode_single_token("<|endoftext|>")
 
         self.n_words: int = self.tkt_model.n_vocab
 
@@ -162,7 +171,11 @@ class TikTokenTokenizer(Tokenizer):
         subs = []
         for i in range(0, len(s), TIKTOKEN_MAX_ENCODE_CHARS):
             subs.append(s[i : i + TIKTOKEN_MAX_ENCODE_CHARS])
-        return sum(self.tkt_model.encode_ordinary_batch(subs), start=[])
+        return (
+            [self.bos_id] * add_bos
+            + sum(self.tkt_model.encode_ordinary_batch(subs), start=[])
+            + [self.eos_id] * add_eos
+        )
 
     def decode(self, tokens: List[int]):
         return self.tkt_model.decode(tokens)
