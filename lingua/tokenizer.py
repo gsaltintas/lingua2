@@ -167,6 +167,8 @@ class TikTokenTokenizer(Tokenizer):
 
     def encode(self, s: str, add_bos: bool, add_eos: bool):
         assert isinstance(s, str)
+        
+        add_bos = self.bos_id is not None and add_bos
 
         subs = []
         for i in range(0, len(s), TIKTOKEN_MAX_ENCODE_CHARS):
