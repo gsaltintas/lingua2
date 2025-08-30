@@ -22,7 +22,7 @@ class StoolArgs:
         True  # Wether to copy new code and config and run regardless that dir exists
     )
     override: bool = False  # Wether to delete dump dir and restart
-    nodes: int = 1  # The number of nodes to run the job on.
+    nodes: int = 4  # The number of nodes to run the job on.
     ngpu: int = 8  # The number of GPUs required per node.
     ncpu: int = 16  # The number of CPUs allocated per task.
     mem: str = ""  # The amount of memory to allocate.
@@ -167,15 +167,17 @@ def launch_job(args: StoolArgs):
     dump_dir = args.config["dump_dir"]
     job_name = args.config["name"]
 
+    copy_data_command = ""
     if "data" in args.config:
         data_dir = args.data_dir
         data_root_dir = args.config["data"]["root_dir"]
+        data_sources = args.config["data"]["sources"]
         if data_dir.startswith("s3://"):
-            copy_data_command = f"srun --ntasks-per-node=1 s5cmd cp '{data_dir.removesuffix('/')}/*' {data_root_dir}/"
+            for source in data_sources.keys():
+                copy_data_command += f"srun --ntasks-per-node=1 s5cmd cp '{data_dir.removesuffix('/')}/{source}/*' {data_root_dir}/{source}\n"
         else:
-            copy_data_command = f"srun --ntasks-per-node=1 bash -c 'mkdir -p {data_root_dir} && rsync -arm {data_dir} {data_root_dir}'"
-    else:
-        copy_data_command = ""
+            for source in data_sources.keys():
+                copy_data_command += f"srun --ntasks-per-node=1 bash -c 'mkdir -p {data_root_dir}/{source} && rsync -arm {data_dir}/{source} {data_root_dir}/{source}'\n"
 
     print("Creating directories...")
     os.makedirs(dump_dir, exist_ok=args.dirs_exists_ok or args.override)
