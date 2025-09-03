@@ -29,7 +29,7 @@ class StoolArgs:
     anaconda: str = "default"  # The path to the anaconda environment.
     constraint: str = ""  # The constraint on the nodes.
     exclude: str = ""  # The nodes to exclude.
-    time: int = 1800  # The time limit of the job (in minutes).
+    time: int = 8000  # The time limit of the job (in minutes).
     account: str = ""
     qos: str = ""
     partition: str = "hopper-prod"
