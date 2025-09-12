@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
+import numpy as np
 import tiktoken
 from sentencepiece import SentencePieceProcessor
 from tiktoken.load import load_tiktoken_bpe
@@ -427,7 +428,8 @@ class TokenMonsterTokenizer(Tokenizer):
         )
 
     def encode(self, s: str, add_bos: bool, add_eos: bool):
-        return self.tokenizer.tokenize(s)
+        token_ids = self.tokenizer.tokenize(s)
+        return token_ids.astype(np.longlong)
 
     def decode(self, tokens: List[int]):
         return self.tokenizer.decode(tokens)
