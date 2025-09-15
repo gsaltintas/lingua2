@@ -430,6 +430,8 @@ class TokenMonsterTokenizer(Tokenizer):
 
     def encode(self, s: str, add_bos: bool, add_eos: bool):
         token_ids = self.tokenizer.tokenize(s)
+        if token_ids is None:
+            return np.array([], dtype=np.longlong)
         return token_ids.astype(np.longlong)
 
     def decode(self, tokens: List[int]):
