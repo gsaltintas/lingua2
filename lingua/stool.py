@@ -174,10 +174,10 @@ def launch_job(args: StoolArgs):
         data_sources = args.config["data"]["sources"]
         if data_dir.startswith("s3://"):
             for source in data_sources.keys():
-                copy_data_command += f"srun --ntasks-per-node=1 s5cmd cp '{data_dir.removesuffix('/')}/{source}/*' {data_root_dir}/{source}\n"
+                copy_data_command += f"s5cmd cp '{data_dir.removesuffix('/')}/{source}/*' {data_root_dir}/{source}\n"
         else:
             for source in data_sources.keys():
-                copy_data_command += f"srun --ntasks-per-node=1 bash -c 'mkdir -p {data_root_dir}/{source} && rsync -arm {data_dir}/{source} {data_root_dir}/{source}'\n"
+                copy_data_command += f"mkdir -p {data_root_dir}/{source} && rsync -arm -v --stats --progress {data_dir}/{source} {data_root_dir}\n"
 
     print("Creating directories...")
     os.makedirs(dump_dir, exist_ok=args.dirs_exists_ok or args.override)
