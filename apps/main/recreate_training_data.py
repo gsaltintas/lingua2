@@ -1,10 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
+import os
 
+dump_data = False
+dump_docs=False
+report_bytes=os.environ.get("REPORT_BYTES", "False") == "True"
 import gc
 import json
 import logging
-import os
 import sys
 import time
 from contextlib import ExitStack
@@ -144,6 +147,7 @@ def setup_fake_distributed(rank, world_size):
 def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
     with ExitStack() as context_stack:
         torch.backends.cuda.enable_cudnn_sdp(False)
+        TOTAL_BYTES = 0
         # tokenizer - shared across all ranks
         tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path)
         validate_train_args(
@@ -152,6 +156,7 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
         )
 
         if get_is_master():
+            import os
             os.makedirs(args.dump_dir, exist_ok=True)
             dump_config(args, Path(args.dump_dir) / "config.yaml")
         init_logger(Path(args.dump_dir) / "train.log")
@@ -159,11 +164,17 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
         setup_env(args.env)
         logger.info(f"Starting job: {args.name}")
         if rank is None:
+            print("Distributeeed", args.distributed)
             setup_torch_distributed(args.distributed)
+            # import os
+            # local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            # torch.cuda.set_device(local_rank)
             world_mesh = get_device_mesh(args.distributed)
+            logger.info(f"Setup torch distributed.")
         else:
             # Setup fake distributed environment
             world_mesh = setup_fake_distributed(rank, world_size)
+            logger.info(f"Setup fake distributed mesh.")
         # Calculate dp_rank and dp_degree exactly like in training
         # build dataloader
         # need dp world size and rank
@@ -174,7 +185,6 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
         if args.distributed.dp_shard > 1:
             dp_rank = dp_rank * world_mesh["dp_shard"].size() + world_mesh["dp_shard"].get_local_rank()
             dp_degree *= world_mesh["dp_shard"].size()
-        logger.info(f"Setup fake distributed mesh.")
         logger.info(f"Running on dp rank : {dp_rank}")
         logger.info(f"Running on dp size : {dp_degree}")
 
@@ -308,31 +318,39 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
             # curr_lr = float(optimizer.param_groups[0]["lr"])
             data_load_start = timer()
             batch, train_state.data_loader_state = next(data_loader)
-            batch = torch.tensor(
-                batch,
-                dtype=torch.long,
-            )
-
+            if not dump_data and report_bytes:
+                total_bytes = 0
+                examples = batch[:, :, 0]
+                for example in examples:
+                    text = tokenizer.decode(example.tolist(), skip_special_tokens=False)
+                    nbytes = len(text.encode('utf-8'))
+                    total_bytes += nbytes
+                    TOTAL_BYTES += nbytes
+            logger.info(f"Rank {dp_rank} - Step {train_state.step} acc {train_state.acc_step} -  Total bytes (GB): {TOTAL_BYTES/1e9}")
+            if dump_data:
+                batch = torch.tensor(
+                    batch,
+                    dtype=torch.long,
+                )
             if every_n_steps(train_state, args.gc_collect_freq, acc_step=0):
                 logger.info("garbage collection")
                 # we do garbage collection manually otherwise different processes
                 # run the GC at different times so they slow down the whole pipeline
                 gc.collect()
+            if dump_data:
+                input_ids = batch[:, :, 0].cuda()
+                labels = batch[:, :, 1].cuda()
+                data_load_time = round(timer() - data_load_start, 4)
+                nwords_since_last_log += input_ids.numel()
+                bsz, seqlen = labels.shape
 
-            input_ids = batch[:, :, 0].cuda()
-            labels = batch[:, :, 1].cuda()
-            data_load_time = round(timer() - data_load_start, 4)
-            nwords_since_last_log += input_ids.numel()
+                for i, example in enumerate(input_ids):
+                    # Decode input ids to text
+                    training_data_txt = tokenizer.decode(example.tolist(), skip_special_tokens=False)
+                    num_bytes = len(training_data_txt.encode('utf-8'))
+                    training_data.append({"step": train_state.step, "grad_acc_step": train_state.acc_step, "seq_idx": i, "text": training_data_txt, "num_bytes": num_bytes})
 
-            bsz, seqlen = labels.shape
-
-            # import code; code.interact(local=dict(globals(), **locals()))
-            for i, example in enumerate(input_ids):
-                # Decode input ids to text
-                training_data_txt = tokenizer.decode(example.tolist())
-                training_data.append({"step": train_state.step, "grad_acc_step": train_state.acc_step-1, "seq_idx": i, "text": training_data_txt})
-
-            if every_n_steps(
+            if dump_data and every_n_steps(
                 train_state, args.checkpoint.dump.every, acc_step=0):
                 logger.info("Dumping training data")
                 with open(dump_file, "a") as f:
@@ -377,7 +395,11 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                 # scheduler.step()
                 # optimizer.zero_grad()
                 train_state.step += 1
-
+                # if not dump_data:
+                #     print(f"Step {train_state.step}")
+            if dump_data:
+                import os
+                print(f"Rank {os.environ.get('RANK')} - Completed step {train_state.step} acc step {train_state.acc_step}")
             # updates the scale for next iteration
             # training iteration complete
             # end_timer.record()
@@ -426,7 +448,7 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                             "wps": wps,
                             # "FLOPS": FLOPS,
                             # "curr_iter_time": curr_iter_time,
-                            "data_load_time": data_load_time,
+                            # "data_load_time": data_load_time,
                         },
                         "optim": {
                             # "grad_norm": grad_norm,
@@ -456,11 +478,13 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                     # f"  flops: {FLOPS:.2e}"
                     f"  wps: {wps:.2e}"
                     # f"  iter: {curr_iter_time:>7}"
-                    f"  data: {data_load_time:>5}"
+                    # f"  data: {data_load_time:>5}"
                     # f"  lr: {curr_lr:.2e}"
                     f"  mem: {gpu_mem_stats.max_active_pct:.0f}%"
                     f"  pow: {gpu_mem_stats.power_draw/1000} W"
                 )
+                import os
+                print(f"Rank {os.environ.get('RANK')} - Step {train_state.step} acc {train_state.acc_step} - total_tokens: {total_tokens}")
 
             saved = False
             # if every_n_steps(
@@ -489,14 +513,14 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
     with open(dump_file, "a") as f:
         for item in training_data:
             f.write(json.dumps(item) + "\n")
-    if not saved:
-        checkpoint.save(
-            model,
-            optimizer,
-            train_state,
-            args,
-            device_mesh=world_mesh,
-        )
+    # if not saved:
+    #     checkpoint.save(
+    #         model,
+    #         optimizer,
+    #         train_state,
+    #         args,
+    #         device_mesh=world_mesh,
+    #     )
     gc.collect()
 
 
@@ -542,6 +566,9 @@ def main():
 
     ## either call with torchrun regularly e.g. and it will write all files in sync
     # torchrun --nproc-per-node 8  --nnodes=1 -m apps.main.recreate_training_data config=apps/main/data_configs/toksuit_gpt4o_torchrun.yaml
+    # torchrun --nproc-per-node 4  --nnodes=2 -m apps.main.recreate_training_data config=apps/main/data_configs_trillium/toksuit_gemma2.yaml
+    ## Later upload to hf
+    ## hf upload-file --path $SCRATCH/data_recreation-2/gemma-2b/* --repo-id r-three/training_data_detokenized-gemma-2b-torchrun --repo-type dataset --token $HF_TOKEN
     ## or run from a single gpu with
     # python -m apps.main.recreate_training_data config=apps/main/data_configs/toksuit_$tok.yaml rank=$rank world_size=8
     cli_args = OmegaConf.from_cli()
@@ -558,6 +585,7 @@ def main():
     
     # We remove 'config' attribute from config as the underlying DataClass does not have it
     del cli_args.config
+    print(f"Variables: rank: {rank}, world_size: {world_size}")
 
     default_cfg = OmegaConf.structured(TrainArgs())
     cfg = OmegaConf.merge(default_cfg, file_cfg, cli_args)
