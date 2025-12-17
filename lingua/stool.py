@@ -5,7 +5,7 @@ import json
 import os
 import shutil
 import subprocess
-from typing import Dict, Any
+from typing import Dict, Any, MutableSequence
 
 from omegaconf import OmegaConf
 
@@ -259,6 +259,9 @@ if __name__ == "__main__":
     or just name=tictac for top level attributes.
     """
     args = OmegaConf.from_cli()
-    args.config = OmegaConf.load(args.config)
+    if isinstance(args.config, MutableSequence):
+        args.config = OmegaConf.merge(*[OmegaConf.load(c) for c in args.config])
+    else:
+        args.config = OmegaConf.load(args.config)
     args = dataclass_from_dict(StoolArgs, args)
     launch_job(args)
