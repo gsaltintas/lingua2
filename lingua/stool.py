@@ -29,13 +29,13 @@ class StoolArgs:
     anaconda: str = "default"  # The path to the anaconda environment.
     constraint: str = ""  # The constraint on the nodes.
     exclude: str = ""  # The nodes to exclude.
-    time: int = 1800  # The time limit of the job (in minutes).
+    time: int = 120  # The time limit of the job (in minutes).
     account: str = ""
     qos: str = ""
     partition: str = "hopper-prod"
     stdout: bool = False
     priority: str = "normal"
-    data_dir: str = "/fsx/craffel/lingua/data/tokenizer_training/"
+    data_dir: str = "/fsx/craffel/lingua/data/"
     # data_dir = str = "s3://common-pile-chunked/"
 
 
