@@ -1,26 +1,31 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-
 import contextlib
-from copy import deepcopy
-from functools import partial
 import json
-from dataclasses import dataclass, field
-from multiprocessing import Process, Queue, Event
-from queue import Full, Empty
-from multiprocessing.synchronize import Event as EventClass
-import os
-from pathlib import Path
-from queue import Full
-from typing import Dict, Any, Iterator, Optional, TypedDict
-from lingua.tokenizer import build_tokenizer, TokenizerArgs
-import numpy as np
 import logging
+import os
+from copy import deepcopy
+from dataclasses import dataclass, field
+from functools import partial
+from math import dist
+from multiprocessing import Event, Process, Queue
+from multiprocessing.synchronize import Event as EventClass
+from pathlib import Path
+from queue import Empty, Full
+from typing import Any, Dict, Iterator, Optional, TypedDict
 
+import numpy as np
+import torch
+
+from lingua.tokenizer import TokenizerArgs, build_tokenizer
+
+dump_docs=os.environ.get("DUMP_DOCS","False")=="True"
+print_docs=os.environ.get("PRINT_DOCS","False")=="True"
+dump_dir="/scratch/gsa/data_recreation-dump/"
 logger = logging.getLogger()
 
 """
 This file contains all code necessary for text data loading from preshuffled jsonl chunks.
-For example if given the following files with a world size of 8 
+For example if given the fodatallowing files with a world size of 8 
 
 /path/to/arxiv:
 arxiv.chunk.00.jsonl (Contains many lines of {"text":...} or {"content":...})
@@ -102,6 +107,7 @@ class TokenizerState(TypedDict):
     add_bos: bool
     add_eos: bool
     path: Optional[str]
+    tokenizers: Optional[Dict[str, str]]
 
 
 class PackTokensState(TypedDict):
@@ -212,6 +218,7 @@ def tokenize(
     add_eos: bool,
     tokenizer_type: str,
     tokenizer_path: Optional[str] = None,
+    tokenizers: Optional[Dict[str, str]] = None,
 ):
     """
     Tokenizes text from an iterator of content-state pairs using a specified tokenizer.
@@ -225,7 +232,7 @@ def tokenize(
     Yields:
     - (tokens, state) pairs, where `tokens` is a list of tokenized text, and `state` is the original state from the iterator.
     """
-    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path)
+    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers)
     for content, state in iterator:
         assert (
             "text" in content or "content" in content
@@ -239,6 +246,7 @@ def tokenize(
             add_eos=add_eos,
             name=tokenizer_type,
             path=tokenizer_path,
+            tokenizers=tokenizers,
         )
 
 
@@ -285,6 +293,17 @@ def choose_source(
             source_to_state=source_to_state,
             rng_state=rng.bit_generator.state,
         )
+        global_rank = int(os.environ["RANK"])
+        local_rank = int(os.environ["LOCAL_RANK"])
+
+        if print_docs:
+            print(f"Rank {global_rank} - Chosen Source: {source_choice} | Source State: {state}")
+        if dump_docs:
+            dump_path = Path(dump_dir)/f"rank_{global_rank}.jsonl"
+            dump_path.parent.mkdir(parents=True,exist_ok=True)
+            with open(dump_path,"a") as f_dump:
+                json.dump({"text":seq["text"], "source": source_choice, "position": state.get("position", None)},f_dump)
+                f_dump.write("\n")
         yield seq, multi_choice_state
 
 
@@ -504,6 +523,7 @@ def distribute_data_to_rank(dataset_path: str, rank: int, world_size: int, file_
                     current_iter=0,
                 )
             )
+    print(f"Chunk info, for rank {rank}, world_size {world_size}, path {rank_to_jsonl_iterator_params[rank]}")
 
     return rank_to_jsonl_iterator_params[rank]
 
@@ -550,7 +570,8 @@ def init_state(
     add_eos: bool,
     tokenizer_name: str,
     tokenizer_path: Optional[str] = None,
-    file_pattern: str = TRAIN_DATA_FILE_PATTERN
+    file_pattern: str = TRAIN_DATA_FILE_PATTERN,
+    tokenizers: Optional[Dict[str, str]] = None,
 ):
     multi_choice_state = init_choice_state(
         root_dir=root_dir, sources=sources, seed=seed, rank=rank, world_size=world_size, file_pattern=file_pattern
@@ -561,6 +582,7 @@ def init_state(
         add_eos=add_eos,
         name=tokenizer_name,
         path=tokenizer_path,
+        tokenizers=tokenizers
     )
     pack_state = PackTokensState(
         start_token=0,
@@ -620,6 +642,7 @@ def build_dataloader(
         tokenizer_state["add_eos"],
         tokenizer_state["name"],
         tokenizer_state["path"],
+        tokenizer_state["tokenizers"]
     )
 
     data_it = pack_tokens(
@@ -627,6 +650,7 @@ def build_dataloader(
         pack_state,
     )
 
+    ## todo: later change this to have the tokenizer info
     data_it = batch_and_shuffle_prefetched_sequences(
         data_loader=data_it,
         seq_len=pack_state["output_seq_len"],
@@ -741,6 +765,7 @@ def init_dataloader_state_from_args(
         tokenizer_path=args.tokenizer.path,
         add_bos=args.add_bos,
         add_eos=args.add_eos,
+        tokenizers=args.tokenizer.tokenizers,
     )
 
 

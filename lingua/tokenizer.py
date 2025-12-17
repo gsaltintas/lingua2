@@ -6,8 +6,9 @@ import os
 from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy as np
 import tiktoken
 from sentencepiece import SentencePieceProcessor
 from tiktoken.load import load_tiktoken_bpe
@@ -19,15 +20,18 @@ logger = logging.getLogger(__name__)
 class TokenizerArgs:
     name: str = "bytes"
     path: Optional[str] = None
+    tokenizers: Optional[List[Dict[str, str]]] = None
 
 
 class Tokenizer(abc.ABC):
+    mapping: Dict[str, Any] = {}
+
     @abc.abstractmethod
     def encode(self, tokens, add_bos, add_eos):
         pass
 
     @abc.abstractmethod
-    def decode(self, tokens):
+    def decode(self, tokens,skip_special_tokens:bool=None):
         pass
 
     @abc.abstractmethod
@@ -37,6 +41,25 @@ class Tokenizer(abc.ABC):
         """Return the offsets of the tokens in the original text. Only used for evaluation."""
         pass
 
+    def load_supermapping(self, base_path: str, path: str) -> None:
+        import json
+
+        mapping_path = os.path.join(base_path, f"{path.replace('/', '--')}_super_mapping.json")
+        assert os.path.isfile(mapping_path), mapping_path
+        with open(mapping_path, "r") as f:
+            self.mapping = json.load(f)
+        logger.info(f"Loaded super mapping from {mapping_path}")
+
+    def encode_to_supermapping(self, tokens: List[str], add_bos: bool, add_eos: bool) -> List[int]:
+        ids = []
+        token_ids = self.encode(tokens, add_bos=add_bos, add_eos=add_eos)
+        for id_ in token_ids:
+            token_id = self.mapping.get(str(id_))
+            if token_id is not None:
+                ids.append(token_id)
+            else:
+                logger.warning(f"Token {id_} not found in super mapping.")
+        return ids
 
 class MockTokenizer(Tokenizer):
     n_words: int = 256
@@ -55,7 +78,7 @@ class ByteTokenizer(Tokenizer):
         tokens = [self.bos_id] * add_bos + list(s.encode()) + [self.eos_id] * add_eos
         return tokens
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
         byte_tokens = bytes([t for t in tokens if t < 256])
         return byte_tokens.decode("utf-8", errors="backslashreplace")
 
@@ -102,7 +125,7 @@ class SentencePieceTokenizer(Tokenizer):
         )
         return tokens
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
         return self.sp_model.decode(tokens)
 
     def get_token_offsets(
@@ -130,11 +153,13 @@ DEFAULT_SPECIAL_TOKENS = {
     "eos": ["<|end_of_text|>", "</s>", "<eos>"],
     "pad": ["<pad>"],
 }
+ALIGNED_BOS = "~SPECIAL~ALIGNED~BOS~SYMBOL~"
 
 class TikTokenTokenizer(Tokenizer):
 
     def __init__(self, model_path: str) -> None:
         try:
+            # on Vulcan need to first load these because there is no internet connection on the compute nodes
             self.tkt_model = tiktoken.encoding_for_model(model_path)
         except:
             mergeable_ranks = load_tiktoken_bpe(model_path)
@@ -179,7 +204,7 @@ class TikTokenTokenizer(Tokenizer):
             + [self.eos_id] * add_eos
         )
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
         return self.tkt_model.decode(tokens)
 
     def get_token_offsets(
@@ -290,9 +315,12 @@ class HFTokenizer(Tokenizer):
             encoded = encoded + [self.eos_id]
         return encoded
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
         """Convert a list of tokens to a stirng."""
-        return self.hf_tokenizer.decode(tokens)
+        kwargs = {}
+        if skip_special_tokens is not None:
+            kwargs["skip_special_tokens"] = skip_special_tokens
+        return self.hf_tokenizer.decode(tokens, **kwargs)
 
     def get_token_offsets(
         self, text: str, tokens: Optional[List[int]] = None
@@ -419,17 +447,17 @@ class TokenMonsterTokenizer(Tokenizer):
         self.bos_id = None
         self.eos_id = None
 
-        logger.info(
-            "#words: %d - BOS ID: %d - EOS ID: %d",
-            self.n_words,
-            self.bos_id,
-            self.eos_id,
-        )
+        # logger.info(
+        #     "#words: %d - BOS ID: %d - EOS ID: %d",
+        #     self.n_words,
+        #     self.bos_id,
+        #     self.eos_id,
+        # )
 
     def encode(self, s: str, add_bos: bool, add_eos: bool):
         return self.tokenizer.tokenize(s)
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
         return self.tokenizer.decode(tokens)
 
     def get_token_offsets(
@@ -458,7 +486,7 @@ class TekkenTokenizer(Tokenizer):
     def encode(self, s: str, add_bos: bool, add_eos: bool):
         return self.tokenizer.encode(s, add_bos, add_eos)
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
         if tokens[0] == self.bos_id:
             tokens = tokens[1:]
         if tokens[-1] == self.eos_id:
@@ -470,8 +498,71 @@ class TekkenTokenizer(Tokenizer):
     ) -> Tuple[List[str], List[int]]:
         return None, None
 
+class SupersetTokenizer(Tokenizer):
+    n_words: int = 851586
+    def __init__(self, tokenizers: List[Dict[str, str]]):
+        self.tokenizers = []
+        ## todo: need to load mappings too
+        import os
+        for tokenizer_info in tokenizers:
+            name = tokenizer_info["name"]
+            path = tokenizer_info.get("path", None)
+            try:
+                tokenizer = build_tokenizer(name, path)
+                encoding_path = path
+                if name == "tiktoken":
+                    encoding_path = f"tiktoken/{path}"
+                elif name == "tokenmonster":
+                    encoding_path = f"tokenmonster/{path}"
+                elif name == "tekken":
+                    encoding_path = f"mistralai/{path}"
+                tokenizer.load_supermapping(f"{os.environ.get('PROJECT')}/tokenizers/super_mappings", encoding_path)
+                self.tokenizers.append(tokenizer)
+            except Exception as e:
+                logger.error("Error loading tokenizer %s from  %s. %s",path, name, e)
+        if len(self.tokenizers) == 0:
+            raise ValueError("No valid tokenizers provided.")
+        self.rng = np.random.default_rng(seed=42)
+        import json
 
-def build_tokenizer(name: str, path: Optional[str] = None) -> Tokenizer:
+        import huggingface_hub as hf_hub
+        try:
+            assert os.environ.get("HF_HUB_OFFLINE") != "1"
+            repo_id = "gsaltintas/supertokenizer-super_vocab"
+            path = hf_hub.hf_hub_download(repo_id, "super_vocab.json")
+        except:
+            path = f"{os.environ.get('PROJECT')}/tokenizers/supertokenizer/super_vocab.json"
+        with open(path, "r") as f:
+            self.super_vocab = json.load(f)
+
+        # align bos eos with llama
+        self.bos_id = self.super_vocab.get(ALIGNED_BOS)
+        self.eos_id = self.super_vocab.get("<|end_of_text|>")
+        self.bos_token, self.eos_token = ALIGNED_BOS, "<|end_of_text|>"
+        print("booos", self.bos_id, self.eos_id)
+        logger.info(
+            "Setting bos_token: %s with id %d.", self.bos_token, self.bos_id
+        )
+        logger.info(
+            "Setting eos_token: %s with id %d.", self.eos_token, self.eos_id
+        )
+
+    def encode(self, tokens, add_bos, add_eos):
+        tokenizer = self.rng.choice(self.tokenizers)
+        ids = tokenizer.encode_to_supermapping(tokens, add_bos=False, add_eos=False)   
+        if add_bos:
+            ids = [self.bos_id] + ids
+        if add_eos:
+            ids = ids + [self.eos_id]
+        return ids
+
+    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
+        pass
+
+    def get_token_offsets(self, text: str, tokens: List[int] | None = None) -> Tuple[List[str] | List[int]]:
+        return None, None
+
+def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None) -> Tokenizer:
     if name == "bytes":
         return ByteTokenizer()
     elif name == "mock":
@@ -488,5 +579,7 @@ def build_tokenizer(name: str, path: Optional[str] = None) -> Tokenizer:
         return TokenMonsterTokenizer(path)
     elif name == "tekken":
         return TekkenTokenizer()
+    elif name == "supertokenizer":
+        return SupersetTokenizer(tokenizers)
     else:
         raise NotImplementedError(f"{name} tokenizer type is not implemented")
