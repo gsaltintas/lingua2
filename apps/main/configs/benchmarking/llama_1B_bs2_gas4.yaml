@@ -1,0 +1,6 @@
+dump_dir: /fsx/craffel/lingua_logs/benchmarking/llama_1B_bs2_gas4/
+name: "llama_1B_bs2_gas4"
+
+grad_acc_steps: 4
+data:
+  batch_size: 2
