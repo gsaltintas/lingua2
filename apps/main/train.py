@@ -24,7 +24,12 @@ from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed._tensor import DTensor
 
 from lingua.args import dataclass_from_dict, dump_config, flatten_dict
-from lingua.checkpoint import CheckpointArgs, CheckpointManager, load_from_checkpoint
+from lingua.checkpoint import (
+    CheckpointArgs,
+    CheckpointManager,
+    load_from_checkpoint,
+    consolidate_checkpoints,
+)
 from lingua.data import (
     DataArgs,
     PackTokensState,
@@ -221,6 +226,8 @@ def every_n_steps(train_state, freq, acc_step=None, acc_freq=None):
 def train(args: TrainArgs):
     with ExitStack() as context_stack:
         tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path)
+        if args.data.tokenizer.n_words is not None:
+            tokenizer.n_words = args.data.tokenizer.n_words
         validate_train_args(
             args,
             tokenizer.n_words,
@@ -316,13 +323,15 @@ def train(args: TrainArgs):
         checkpoint.load(model, optimizer, train_state, world_mesh)
 
         if args.checkpoint.save_init_ckpt:
-            _ = checkpoint.save(
-                model,
-                optimizer,
-                train_state,
-                args,
-                device_mesh=world_mesh,
-            )
+            if checkpoint.save(
+                    model,
+                    optimizer,
+                    train_state,
+                    args,
+                    device_mesh=world_mesh,
+                ):
+                _ = consolidate_checkpoints(str(checkpoint.existing_saves[-1]))
+
 
         # Either load from latest checkpoint or start from scratch
         if args.probe_freq is not None:

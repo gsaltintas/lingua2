@@ -5,7 +5,7 @@ import json
 import os
 import shutil
 import subprocess
-from typing import Dict, Any
+from typing import Dict, Any, MutableSequence
 
 from omegaconf import OmegaConf
 
@@ -22,21 +22,21 @@ class StoolArgs:
         True  # Wether to copy new code and config and run regardless that dir exists
     )
     override: bool = False  # Wether to delete dump dir and restart
-    nodes: int = 8  # The number of nodes to run the job on.
+    nodes: int = 1  # The number of nodes to run the job on.
     ngpu: int = 8  # The number of GPUs required per node.
     ncpu: int = 16  # The number of CPUs allocated per task.
     mem: str = ""  # The amount of memory to allocate.
     anaconda: str = "default"  # The path to the anaconda environment.
     constraint: str = ""  # The constraint on the nodes.
     exclude: str = ""  # The nodes to exclude.
-    time: int = 60000  # The time limit of the job (in minutes).
+    time: int = 120  # The time limit of the job (in minutes).
     account: str = ""
     qos: str = ""
     partition: str = "hopper-prod"
     stdout: bool = False
     priority: str = "normal"
-    # data_dir: str = "/fsx/craffel/common-pile-chunked/"
-    data_dir = str = "s3://common-pile-chunked/"
+    data_dir: str = "/fsx/craffel/lingua/data/"
+    # data_dir = str = "s3://common-pile-chunked/"
 
 
 SBATCH_COMMAND = """#!/bin/bash
@@ -167,15 +167,17 @@ def launch_job(args: StoolArgs):
     dump_dir = args.config["dump_dir"]
     job_name = args.config["name"]
 
+    copy_data_command = ""
     if "data" in args.config:
         data_dir = args.data_dir
         data_root_dir = args.config["data"]["root_dir"]
+        data_sources = args.config["data"]["sources"]
         if data_dir.startswith("s3://"):
-            copy_data_command = f"srun --ntasks-per-node=1 s5cmd cp '{data_dir.removesuffix('/')}/*' {data_root_dir}/"
+            for source in data_sources.keys():
+                copy_data_command += f"s5cmd cp '{data_dir.removesuffix('/')}/{source}/*' {data_root_dir}/{source}\n"
         else:
-            copy_data_command = f"srun --ntasks-per-node=1 bash -c 'mkdir -p {data_root_dir} && rsync -arm {data_dir} {data_root_dir}'"
-    else:
-        copy_data_command = ""
+            for source in data_sources.keys():
+                copy_data_command += f"mkdir -p {data_root_dir}/{source} && rsync -arm -v --stats --progress {data_dir}/{source} {data_root_dir}\n"
 
     print("Creating directories...")
     os.makedirs(dump_dir, exist_ok=args.dirs_exists_ok or args.override)
@@ -259,6 +261,9 @@ if __name__ == "__main__":
     or just name=tictac for top level attributes.
     """
     args = OmegaConf.from_cli()
-    args.config = OmegaConf.load(args.config)
+    if isinstance(args.config, MutableSequence):
+        args.config = OmegaConf.merge(*[OmegaConf.load(c) for c in args.config])
+    else:
+        args.config = OmegaConf.load(args.config)
     args = dataclass_from_dict(StoolArgs, args)
     launch_job(args)
