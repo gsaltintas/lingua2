@@ -25,16 +25,16 @@ model:
   multiple_of: 256
 
 data:
-  root_dir: /scratch/craffel/lingua/data/
+  root_dir: /scratch/gsa/data
   sources:
-    fineweb_edu_10bt_shuffled8: 1.0
+    fw_edu: 1.0
   prefetch_size: 4096
   seq_len: 4096
   n_views: 2
   load_async: true
   tokenizer:
     name: tiktoken
-    path: /fsx/craffel/lingua/tokenizers/llama3.model
+    path: /scratch/gsa/lingua_dump/tokenizer/llama/original/tokenizer.model
 
 profiling:
   run: true

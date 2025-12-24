@@ -611,14 +611,14 @@ def train(args: TrainArgs):
                 requeue_slurm_job()
                 sys.exit(0)
 
-    if not saved:
-        checkpoint.save(
-            model,
-            optimizer,
-            train_state,
-            args,
-            device_mesh=world_mesh,
-        )
+    # if not saved:
+    #     checkpoint.save(
+    #         model,
+    #         optimizer,
+    #         train_state,
+    #         args,
+    #         device_mesh=world_mesh,
+    #     )
     gc.collect()
 
 

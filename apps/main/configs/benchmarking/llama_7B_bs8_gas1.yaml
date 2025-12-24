@@ -1,4 +1,4 @@
-dump_dir: /fsx/craffel/lingua_logs/benchmarking/llama_7B_bs8_gas1/
+dump_dir: /scratch/gsa/lingua_dump/train/benchmarking/llama_7B_bs8_gas1/
 name: "llama_7B_bs8_gas1"
 
 grad_acc_steps: 1

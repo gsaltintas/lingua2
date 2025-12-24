@@ -2,7 +2,6 @@
 
 import atexit
 import contextlib
-from itertools import chain
 import logging
 import multiprocessing as mp
 import os
@@ -15,25 +14,26 @@ import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from functools import lru_cache, partial, reduce
+from itertools import chain
 from typing import List, Optional, Tuple, Union
 
 import torch
-from torch.distributed import ReduceOp
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch import distributed as dist
-from torch.distributed._tensor import DTensor
-from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    checkpoint_wrapper,
-)
-from torch.utils.checkpoint import (
-    create_selective_checkpoint_contexts,
-    CheckpointPolicy,
-)
-from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 # for no recompute ops
 import xformers.ops
+from torch import distributed as dist
+from torch.distributed import ReduceOp
+from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
+from torch.distributed._tensor import DTensor
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    checkpoint_wrapper,
+)
+from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.checkpoint import (
+    CheckpointPolicy,
+    create_selective_checkpoint_contexts,
+)
 
 from lingua.float8 import convert_linears_to_fp8
 

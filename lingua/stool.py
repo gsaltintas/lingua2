@@ -1,11 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
-from dataclasses import dataclass
 import json
 import os
 import shutil
 import subprocess
-from typing import Dict, Any, MutableSequence
+from dataclasses import dataclass
+from typing import Any, Dict, MutableSequence
 
 from omegaconf import OmegaConf
 
@@ -74,11 +74,20 @@ source activate {conda_env_path}
 export OMP_NUM_THREADS=1
 export LAUNCH_WITH="SBATCH"
 export DUMP_DIR={dump_dir}
-export TMPDIR=/scratch
+export TMPDIR=/scratch/gsa/lingua_tmp//tmp
 
-{copy_data_command}
+# {copy_data_command}
 
-srun {log_output} -n {tasks} -N {nodes_per_run} python -u -m {script} config=$DUMP_DIR/base_config.yaml
+srun {log_output}  --ntasks-per-node=1  -N {nodes_per_run} torchrun \
+    --nproc-per-node={tasks} \
+    --nnodes={nodes_per_run} \
+    --rdzv_id=1234 \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=127.0.0.1:2905 \
+    -m {script} config=$DUMP_DIR/base_config.yaml
+
+# srun {log_output}  -n 1 --gres=gpu:4 -N {nodes_per_run} python -u -m {script} config=$DUMP_DIR/base_config.yaml
+# srun {log_output} -n {tasks} -N {nodes_per_run} python -u -m {script} config=$DUMP_DIR/base_config.yaml
 """
 
 
