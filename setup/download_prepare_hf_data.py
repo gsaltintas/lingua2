@@ -15,7 +15,7 @@ from huggingface_hub import HfApi, snapshot_download
 num_proc = 16
 s3 = boto3.client("s3")
 bucket_name = "softwareheritage"
-
+os.environ["TMPDIR"] = "/scratch/gsa/tmp"
 
 def download_contents(blob_id):
     key = f"content/{blob_id}"
@@ -310,7 +310,14 @@ def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False,
                 run_command(f"head -n {k_validation} {chunk_file} >> {validation_file}")
                 run_command(f"sed -i '1,{k_validation}d' {chunk_file}")
                 if max_file_size:
-                    run_command(f"truncate -s {max_file_size} {chunk_file}")
+                    current_size = int(os.path.getsize(chunk_file))
+                    if current_size > int(max_file_size):
+                        print(f"Truncating {chunk_file} from {current_size} to {max_file_size}")
+                        run_command(f"truncate -s {max_file_size} {chunk_file}")
+                        # remove the last line
+                        run_command(f"perl -i -ne 'print unless eof' {chunk_file}")
+                    else:
+                        print(f"Skipping truncate: {chunk_file} is already within limits ({current_size})")
     else:
         run_command(
             f"ulimit -n 100000 && "
@@ -327,7 +334,14 @@ def main(dataset, memory, data_dir, seed=42, nchunks=32, preserve_subsets=False,
             run_command(f"head -n {k_validation} {chunk_file} >> {validation_file}")
             run_command(f"sed -i '1,{k_validation}d' {chunk_file}")
             if max_file_size:
-                run_command(f"truncate -s {max_file_size} {chunk_file}")
+                current_size = os.path.getsize(chunk_file)
+                if current_size > int(max_file_size):
+                    print(f"Truncating {chunk_file} from {current_size} to {max_file_size}")
+                    run_command(f"truncate -s {max_file_size} {chunk_file}")
+                    # remove the last line
+                    run_command(f"perl -i -ne 'print unless eof' {chunk_file}")
+                else:
+                    print(f"Skipping truncate: {chunk_file} is already within limits ({current_size})")
 
     print("All tasks completed successfully!")
     if upload_to_hf:
