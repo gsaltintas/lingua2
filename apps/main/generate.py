@@ -135,6 +135,7 @@ class PackedCausalTransformerGeneratorArgs:
     show_progress: bool = False
     dtype: Optional[str] = "bf16"
     device: Optional[str] = "cuda"
+    add_bos: Optional[bool] = True
 
 
 class PackedCausalTransformerGenerator:
@@ -187,6 +188,7 @@ class PackedCausalTransformerGenerator:
         self.current_doc_id, self.current_tok_id = None, None
         self.padded_doc_start = None
         self.prefill_mask = None
+        self.add_bos: bool = True
 
     def clear_cache(self, offset):
         for module in self.model.modules():
@@ -323,7 +325,7 @@ class PackedCausalTransformerGenerator:
     def generate(self, prompts):
         # Tokenize
         prompts = [
-            self.tokenizer.encode(p, add_bos=True, add_eos=False) for p in prompts
+            self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False) for p in prompts
         ]
         # Truncate
         max_seqlen = (
@@ -413,7 +415,7 @@ def load_consolidated_model_and_tokenizer(
         config.distributed.model_dtype
     ]
     model_args = dataclass_from_dict(model_args_cls, config.model, strict=False)
-    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path)
+    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path, config.data.tokenizer.tokenizers)
     model = model_cls(model_args)
     st_dict = torch.load(ckpt_path / CONSOLIDATE_NAME, weights_only=True)
     model.load_state_dict(st_dict["model"])
