@@ -1,31 +1,32 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 import contextlib
-import json
-import logging
-import os
 from copy import deepcopy
-from dataclasses import dataclass, field
 from functools import partial
-from math import dist
+import json
+from dataclasses import dataclass, field
 from multiprocessing import Event, Process, Queue
 from multiprocessing.synchronize import Event as EventClass
-from pathlib import Path
+import os
 from queue import Empty, Full
 from typing import Any, Dict, Iterator, Optional, TypedDict
+from math import dist
+from pathlib import Path
 
 import numpy as np
+import logging
 import torch
 
 from lingua.tokenizer import TokenizerArgs, build_tokenizer
 
 dump_docs=os.environ.get("DUMP_DOCS","False")=="True"
 print_docs=os.environ.get("PRINT_DOCS","False")=="True"
-dump_dir="/scratch/gsa/data_recreation-dump/"
+dump_dir=os.environ.get("DUMP_DIR","/scratch/gsa/data_recreation-dump/")
 logger = logging.getLogger()
 
 """
 This file contains all code necessary for text data loading from preshuffled jsonl chunks.
-For example if given the fodatallowing files with a world size of 8 
+For example if given the follwoing files with a world size of 8 
 
 /path/to/arxiv:
 arxiv.chunk.00.jsonl (Contains many lines of {"text":...} or {"content":...})
@@ -523,7 +524,6 @@ def distribute_data_to_rank(dataset_path: str, rank: int, world_size: int, file_
                     current_iter=0,
                 )
             )
-    print(f"Chunk info, for rank {rank}, world_size {world_size}, path {rank_to_jsonl_iterator_params[rank]}")
 
     return rank_to_jsonl_iterator_params[rank]
 

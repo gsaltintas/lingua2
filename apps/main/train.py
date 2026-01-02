@@ -1,37 +1,28 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
+from copy import deepcopy
 import gc
 import logging
 import os
 import sys
 import time
 from contextlib import ExitStack
-from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from timeit import default_timer as timer
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from omegaconf import OmegaConf
 import torch
 import torch.distributed
 import torch.nn.functional as F
-import wandb
 import xformers.profiler
-from omegaconf import OmegaConf
-from torch.distributed._tensor import DTensor
-from torch.distributed.checkpoint.stateful import Stateful
 from torch.optim import lr_scheduler
+from torch.distributed.checkpoint.stateful import Stateful
+from torch.distributed._tensor import DTensor
 
-from apps.main.transformer import (
-    LMTransformer,
-    LMTransformerArgs,
-    build_fsdp_grouping_plan,
-    get_no_recompute_ops,
-    get_num_flop_per_token,
-    tp_parallelize,
-)
 from lingua.args import dataclass_from_dict, dump_config, flatten_dict
 from lingua.checkpoint import (
     CheckpointArgs,
@@ -48,17 +39,17 @@ from lingua.data import (
 from lingua.distributed import (
     DistributedArgs,
     EnvironmentArgs,
-    check_model_value_range,
-    clean_env,
+    init_signal_handler,
     dist_mean_dict,
     get_device_mesh,
     get_is_master,
     get_world_size,
-    init_signal_handler,
     parallelize_model,
-    requeue_slurm_job,
     setup_env,
     setup_torch_distributed,
+    clean_env,
+    requeue_slurm_job,
+    check_model_value_range,
 )
 from lingua.logger import init_logger
 from lingua.metrics import (
@@ -68,10 +59,20 @@ from lingua.metrics import (
     get_num_params,
 )
 from lingua.optim import OptimArgs, build_optimizer
-from lingua.probe import AutoProbeD
 from lingua.profiling import ProfilerArgs, maybe_run_profiler
-from lingua.stool import StoolArgs, launch_job
 from lingua.tokenizer import build_tokenizer
+from apps.main.transformer import (
+    LMTransformer,
+    LMTransformerArgs,
+    build_fsdp_grouping_plan,
+    get_no_recompute_ops,
+    get_num_flop_per_token,
+    tp_parallelize,
+)
+from lingua.probe import AutoProbeD
+from lingua.stool import StoolArgs, launch_job
+
+import wandb
 
 logger = logging.getLogger()
 
@@ -224,7 +225,6 @@ def every_n_steps(train_state, freq, acc_step=None, acc_freq=None):
 
 def train(args: TrainArgs):
     with ExitStack() as context_stack:
-        torch.backends.cuda.enable_cudnn_sdp(False)
         tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path, args.data.tokenizer.tokenizers)
         validate_train_args(
             args,
@@ -294,11 +294,12 @@ def train(args: TrainArgs):
         optimizer, scheduler = build_optimizer(model, args.optim, args.steps)
 
         if args.checkpoint.init_ckpt_path:
+            # todo: maybe auto load the largest ckpt
             logger.info(f"Loading initial model from {args.checkpoint.init_ckpt_path}")
-            # if args.checkpoint.load_init_optimizer_state:
-                # load_from_checkpoint(args.checkpoint.init_ckpt_path, model, optimizer, model_key="model") # Put model_key="" if its directly the model checkpoint
-            # else:
-            load_from_checkpoint(args.checkpoint.init_ckpt_path, model, model_key="model") # Put model_key="" if its directly the model checkpoint
+            if args.checkpoint.load_init_optimizer_state:
+                load_from_checkpoint(args.checkpoint.init_ckpt_path, model, optimizer, model_key="model") # Put model_key="" if its directly the model checkpoint
+            else:
+                load_from_checkpoint(args.checkpoint.init_ckpt_path, model, model_key="model") # Put model_key="" if its directly the model checkpoint
             model.rope_embeddings.reset_parameters() # For RoPe initialization since it's a buffer it might not be loaded
         else:
             with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
@@ -596,7 +597,6 @@ def train(args: TrainArgs):
                                 qos="lowest",
                             )
                         )
-                        exit(0)
 
             if preemption_flag["flag"]:
                 if not saved:
