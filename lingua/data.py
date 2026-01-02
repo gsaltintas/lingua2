@@ -26,7 +26,7 @@ logger = logging.getLogger()
 
 """
 This file contains all code necessary for text data loading from preshuffled jsonl chunks.
-For example if given the follwoing files with a world size of 8 
+For example if given the following files with a world size of 8 
 
 /path/to/arxiv:
 arxiv.chunk.00.jsonl (Contains many lines of {"text":...} or {"content":...})
