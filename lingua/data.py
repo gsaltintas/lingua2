@@ -109,6 +109,7 @@ class TokenizerState(TypedDict):
     add_eos: bool
     path: Optional[str]
     tokenizers: Optional[Dict[str, str]]
+    dropout: Optional[float]
 
 
 class PackTokensState(TypedDict):
@@ -220,6 +221,7 @@ def tokenize(
     tokenizer_type: str,
     tokenizer_path: Optional[str] = None,
     tokenizers: Optional[Dict[str, str]] = None,
+    dropout: float = 0.0,
 ):
     """
     Tokenizes text from an iterator of content-state pairs using a specified tokenizer.
@@ -233,7 +235,7 @@ def tokenize(
     Yields:
     - (tokens, state) pairs, where `tokens` is a list of tokenized text, and `state` is the original state from the iterator.
     """
-    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers)
+    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers, dropout=dropout)
     for content, state in iterator:
         assert (
             "text" in content or "content" in content
@@ -248,6 +250,7 @@ def tokenize(
             name=tokenizer_type,
             path=tokenizer_path,
             tokenizers=tokenizers,
+            dropout=dropout
         )
 
 
@@ -370,6 +373,13 @@ def pack_tokens(
     for i, (tokens, state) in enumerate(iterator):
         end_token = start_token
         sample_is_read = False
+        # If start_token is beyond current tokens, it means the rewind 
+        # should have landed in the previous sample or we reached the end.
+        if start_token >= len(tokens):
+            start_token = 0
+            sample_is_read = True
+            previous_state = state
+            continue # Skip to the next sequence in the iterator
         while not sample_is_read:
             assert start_token < len(
                 tokens
@@ -572,6 +582,7 @@ def init_state(
     tokenizer_path: Optional[str] = None,
     file_pattern: str = TRAIN_DATA_FILE_PATTERN,
     tokenizers: Optional[Dict[str, str]] = None,
+    dropout: float = 0.0,
 ):
     multi_choice_state = init_choice_state(
         root_dir=root_dir, sources=sources, seed=seed, rank=rank, world_size=world_size, file_pattern=file_pattern
@@ -582,7 +593,8 @@ def init_state(
         add_eos=add_eos,
         name=tokenizer_name,
         path=tokenizer_path,
-        tokenizers=tokenizers
+        tokenizers=tokenizers,
+        dropout=dropout
     )
     pack_state = PackTokensState(
         start_token=0,
@@ -642,7 +654,8 @@ def build_dataloader(
         tokenizer_state["add_eos"],
         tokenizer_state["name"],
         tokenizer_state["path"],
-        tokenizer_state["tokenizers"]
+        tokenizer_state["tokenizers"],
+        tokenizer_state["dropout"]
     )
 
     data_it = pack_tokens(
@@ -766,6 +779,7 @@ def init_dataloader_state_from_args(
         add_bos=args.add_bos,
         add_eos=args.add_eos,
         tokenizers=args.tokenizer.tokenizers,
+        dropout=args.tokenizer.dropout,
     )
 
 

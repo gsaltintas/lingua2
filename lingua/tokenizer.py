@@ -294,7 +294,7 @@ class HFTokenizer(Tokenizer):
             logger.info("Loaded Tokenizers Tokenizer.")
             if dropout > 0:
                 try:
-                    self.hf_tokenizer.model.dropout = dropout
+                    self.hf_tokenizer._tokenizer.model.dropout = dropout
                     logger.info("Set tokenizer dropout to %f", dropout)
                 except Exception as e:
                     logger.warning("Failed to set tokenizer dropout: %s", e)
@@ -407,11 +407,11 @@ class SimplifiedHFTokenizer(HFTokenizer):
             "Extracted Tokenizers Tokenizer from Transformers Tokenizer"
         )
         if dropout > 0:
-                try:
-                    self.hf_tokenizer.model.dropout = dropout
-                    logger.info("Set tokenizer dropout to %f", dropout)
-                except Exception as e:
-                    logger.warning("Failed to set tokenizer dropout: %s", e)
+            try:
+                self.hf_tokenizer.model.dropout = dropout
+                logger.info("Set tokenizer dropout to %f", dropout)
+            except Exception as e:
+                logger.warning("Failed to set tokenizer dropout: %s", e)
         special_tokens = getattr(transformers_tokenizer, "special_tokens_map", {})
         if "bert" in model_path:
             self.bos_token = special_tokens.get("cls_token")
