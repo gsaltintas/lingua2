@@ -59,7 +59,6 @@ class LMHarnessArgs:
     torch_random_seed: int = 1234
     fewshot_random_seed: int = 1234
 
-
 @dataclass
 class ValidationArgs:
     max_steps: Optional[int] = None # If None the whole validation file is used -> /!\ This number of steps is gpu dependent (100 max steps on 8 gpus = 800 steps on 1 gpu)
@@ -200,7 +199,7 @@ def eval_on_val(generator, val_args: ValidationArgs, train_cfg):
             metrics['nll_per_char'].append(tmp / len(texts[i]))
 
             metrics['avg_seqlen'].append(len(ll))
-
+        
         for m in metrics:
             metrics[m] = sum(metrics[m]) / len(metrics[m])
         metrics.update(dist_mean_dict(metrics))
