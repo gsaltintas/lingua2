@@ -188,7 +188,7 @@ def eval_on_val(generator, val_args: ValidationArgs, train_cfg):
                 break
             content_key = "text" if ("text" in content) else "content"
             texts.append(content[content_key])
-
+        
         _, loglikelihood, _ = generator.generate(texts)
 
         metrics = defaultdict(list)
