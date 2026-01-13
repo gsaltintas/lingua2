@@ -20,8 +20,8 @@ import torch.distributed
 import torch.nn.functional as F
 import xformers.profiler
 from torch.optim import lr_scheduler
-from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed._tensor import DTensor
+from torch.distributed.checkpoint.stateful import Stateful
 
 from lingua.args import dataclass_from_dict, dump_config, flatten_dict
 from lingua.checkpoint import (
@@ -39,17 +39,17 @@ from lingua.data import (
 from lingua.distributed import (
     DistributedArgs,
     EnvironmentArgs,
-    init_signal_handler,
+    check_model_value_range,
+    clean_env,
     dist_mean_dict,
     get_device_mesh,
     get_is_master,
     get_world_size,
+    init_signal_handler,
     parallelize_model,
+    requeue_slurm_job,
     setup_env,
     setup_torch_distributed,
-    clean_env,
-    requeue_slurm_job,
-    check_model_value_range,
 )
 from lingua.logger import init_logger
 from lingua.metrics import (
@@ -225,7 +225,7 @@ def every_n_steps(train_state, freq, acc_step=None, acc_freq=None):
 
 def train(args: TrainArgs):
     with ExitStack() as context_stack:
-        tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path, args.data.tokenizer.tokenizers)
+        tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path, args.data.tokenizer.tokenizers, args.data.tokenizer.dropout)
         validate_train_args(
             args,
             tokenizer.n_words,

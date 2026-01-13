@@ -29,6 +29,7 @@ from lingua.distributed import (
     get_world_size,
     setup_torch_distributed,
 )
+from lingua.stool import StoolArgs
 
 EVAL_FOLDER_NAME = "{:010d}"
 
@@ -58,6 +59,18 @@ class LMHarnessArgs:
     numpy_random_seed: int = 1234
     torch_random_seed: int = 1234
     fewshot_random_seed: int = 1234
+    confirm_run_unsafe_code: bool = False
+
+
+@dataclass
+class BigcodeArgs:
+    tasks: Optional[List[Any]] = None
+    num_fewshot: Optional[int] = None
+    device: Optional[str] = None
+    use_cache: Optional[str] = None
+    cache_requests: bool = False
+    limit: Optional[Union[int, float]] = None
+
 
 @dataclass
 class ValidationArgs:
@@ -65,6 +78,7 @@ class ValidationArgs:
     use_val_from_train_src: bool = True # Use the validation set from training sources
     root_dir: str = ""
     sources: List[str] = field(default_factory=list) # Other sources to eval on
+
 
 @dataclass
 class EvalArgs:
@@ -76,6 +90,8 @@ class EvalArgs:
         default_factory=PackedCausalTransformerGeneratorArgs
     )
     harness: Optional[LMHarnessArgs] = field(default_factory=LMHarnessArgs)
+    bigcode: Optional[BigcodeArgs] = field(default_factory=BigcodeArgs)
+    stool: Optional[StoolArgs] = field(default_factory=StoolArgs)
     validation: Optional[ValidationArgs] = None
 
     wandb: Optional[Any] = None
@@ -184,22 +200,24 @@ def eval_on_val(generator, val_args: ValidationArgs, train_cfg):
         texts = []
         logger.info(f"Running validation on {src}...")
         for step, (content, state) in enumerate(jsonl_iterator):
-            if state['current_iter'] > 0 or (val_args.max_steps is not None and step >= val_args.max_steps):
+            if state["current_iter"] > 0 or (
+                val_args.max_steps is not None and step >= val_args.max_steps
+            ):
                 break
             content_key = "text" if ("text" in content) else "content"
             texts.append(content[content_key])
-        
+
         _, loglikelihood, _ = generator.generate(texts)
 
         metrics = defaultdict(list)
         for i, ll in enumerate(loglikelihood):
             tmp = ll.sum().item()
-            metrics['nll'].append(tmp)
-            metrics['nll_per_token'].append(tmp / len(ll))
-            metrics['nll_per_char'].append(tmp / len(texts[i]))
+            metrics["nll"].append(tmp)
+            metrics["nll_per_token"].append(tmp / len(ll))
+            metrics["nll_per_char"].append(tmp / len(texts[i]))
 
-            metrics['avg_seqlen'].append(len(ll))
-        
+            metrics["avg_seqlen"].append(len(ll))
+
         for m in metrics:
             metrics[m] = sum(metrics[m]) / len(metrics[m])
         metrics.update(dist_mean_dict(metrics))
@@ -214,6 +232,7 @@ def eval_on_val(generator, val_args: ValidationArgs, train_cfg):
     generator.max_gen_len = max_gen_len
 
     return all_val_metrics
+
 
 def launch_eval(cfg: EvalArgs):
     if not torch.distributed.is_initialized():

@@ -415,7 +415,7 @@ def load_consolidated_model_and_tokenizer(
         config.distributed.model_dtype
     ]
     model_args = dataclass_from_dict(model_args_cls, config.model, strict=False)
-    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path, config.data.tokenizer.tokenizers)
+    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path, config.data.tokenizer.tokenizers, config.data.tokenizer.dropout)
     model = model_cls(model_args)
     st_dict = torch.load(ckpt_path / CONSOLIDATE_NAME, weights_only=True)
     model.load_state_dict(st_dict["model"])
