@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 class TokenizerArgs:
     name: str = "bytes"
     path: Optional[str] = None
-    tokenizers: Optional[List[Dict[str, str]]] = None
+    tokenizers: Optional[List[Dict[str, Any]]] = None
     load_supermapping: Optional[bool] = False
     dropout: float = 0.0
+    seed: Optional[int] = 42
 
 
 class Tokenizer(abc.ABC):
@@ -46,7 +47,20 @@ class Tokenizer(abc.ABC):
     def load_supermapping(self, base_path: str, path: str) -> None:
         import json
 
-        mapping_path = os.path.join(base_path, f"{path.replace('/', '--')}_super_mapping.json")
+        mapping_path = Path(base_path, f"{path.replace('/', '--')}_super_mapping.json")
+        if not mapping_path.exists():
+            import huggingface_hub as hf_hub
+
+            try:
+                assert os.environ.get("HF_HUB_OFFLINE") != "1"
+                repo_id = f"gsaltintas/supertokenizer-{path.replace('/', '-')}"
+                mapping_path = hf_hub.hf_hub_download(
+                    repo_id, f"{path.replace('/', '--')}_super_mapping.json"
+                )
+                logger.info(f"Downloaded super mapping from HF Hub {repo_id} to {mapping_path}")
+            except:
+                mapping_path = Path(base_path, f"{path.replace('/', '--')}_super_mapping.json")
+                logger.warning(f"Failed to download super mapping from HF Hub {repo_id}. Trying local path {mapping_path}")
         assert os.path.isfile(mapping_path), mapping_path
         with open(mapping_path, "r") as f:
             self.mapping = json.load(f)
@@ -55,8 +69,10 @@ class Tokenizer(abc.ABC):
     def encode_to_supermapping(self, tokens: List[str], add_bos: bool, add_eos: bool) -> List[int]:
         ids = []
         token_ids = self.encode(tokens, add_bos=add_bos, add_eos=add_eos)
+        if len(self.mapping) == 0:
+            return ids
         for id_ in token_ids:
-            token_id = self.mapping.get(str(id_))
+            token_id = self.mapping.get(str(id_), None)
             if token_id is not None:
                 ids.append(token_id)
             else:
@@ -520,7 +536,7 @@ class TekkenTokenizer(Tokenizer):
 
 class SupersetTokenizer(Tokenizer):
     n_words: int = 851586
-    def __init__(self, tokenizers: List[Dict[str, str]]):
+    def __init__(self, tokenizers: List[Dict[str, str]], rng_state: Dict[str, Any] = None):
         self.tokenizers = []
         ## todo: need to load mappings too
         import os
@@ -544,12 +560,23 @@ class SupersetTokenizer(Tokenizer):
                 if load_supermapping:
                     logger.info(f"Loading supermapping for the tokenizer {path}")
                     tokenizer.load_supermapping(f"{os.environ.get('PROJECT')}/tokenizers/super_mappings", encoding_path)
+                else:
+                    logger.info(f"Not loading supermapping for the tokenizer {path}")
                 self.tokenizers.append(tokenizer)
             except Exception as e:
                 logger.error("Error loading tokenizer %s from  %s. %s",path, name, e)
         if len(self.tokenizers) == 0:
             raise ValueError("No valid tokenizers provided.")
-        self.rng = np.random.default_rng(seed=42)
+        
+        logger.info(f"Number of tokenizers loaded: {len(self.tokenizers)}")
+        if rng_state is not None:
+            rng = np.random.default_rng()
+            rng.bit_generator.state = rng_state
+            self.rng = rng
+            logger.info("Restored RNG state for supertokenizer.")
+        else:
+            self.rng = np.random.default_rng(seed=42)
+            logger.info("Initialized new RNG for supertokenizer.")
         import json
 
         import huggingface_hub as hf_hub
@@ -561,7 +588,6 @@ class SupersetTokenizer(Tokenizer):
             path = f"{os.environ.get('PROJECT')}/tokenizers/supertokenizer/super_vocab.json"
         with open(path, "r") as f:
             self.super_vocab = json.load(f)
-
         # align bos eos with llama
         self.bos_id = self.super_vocab.get(ALIGNED_BOS)
         self.eos_id = self.super_vocab.get("<|end_of_text|>")
@@ -588,7 +614,7 @@ class SupersetTokenizer(Tokenizer):
     def get_token_offsets(self, text: str, tokens: List[int] | None = None) -> Tuple[List[str] | List[int]]:
         return None, None
 
-def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None, dropout: float = 0) -> Tokenizer:
+def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None, dropout: float = 0, rng_state: Dict[str, Any] = None) -> Tokenizer:
     if name == "bytes":
         return ByteTokenizer()
     elif name == "mock":
@@ -606,6 +632,6 @@ def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] 
     elif name == "tekken":
         return TekkenTokenizer()
     elif name == "supertokenizer":
-        return SupersetTokenizer(tokenizers)
+        return SupersetTokenizer(tokenizers, rng_state=rng_state)
     else:
         raise NotImplementedError(f"{name} tokenizer type is not implemented")

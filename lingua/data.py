@@ -1,20 +1,20 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import contextlib
-from copy import deepcopy
-from functools import partial
 import json
+import logging
+import os
+from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import partial
+from math import dist
 from multiprocessing import Event, Process, Queue
 from multiprocessing.synchronize import Event as EventClass
-import os
+from pathlib import Path
 from queue import Empty, Full
 from typing import Any, Dict, Iterator, Optional, TypedDict
-from math import dist
-from pathlib import Path
 
 import numpy as np
-import logging
 import torch
 
 from lingua.tokenizer import TokenizerArgs, build_tokenizer
@@ -110,6 +110,8 @@ class TokenizerState(TypedDict):
     path: Optional[str]
     tokenizers: Optional[Dict[str, str]]
     dropout: Optional[float]
+    rng_state: Dict[str, Any]       # for supertokenizer
+    seed: Optional[int]
 
 
 class PackTokensState(TypedDict):
@@ -222,6 +224,8 @@ def tokenize(
     tokenizer_path: Optional[str] = None,
     tokenizers: Optional[Dict[str, str]] = None,
     dropout: float = 0.0,
+    rng_state: Optional[Dict[str, Any]] = None,
+    seed: Optional[int] = 42,
 ):
     """
     Tokenizes text from an iterator of content-state pairs using a specified tokenizer.
@@ -235,7 +239,9 @@ def tokenize(
     Yields:
     - (tokens, state) pairs, where `tokens` is a list of tokenized text, and `state` is the original state from the iterator.
     """
-    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers, dropout=dropout)
+    if rng_state is None:
+        rng_state = np.random.default_rng(seed).bit_generator.state
+    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers, dropout=dropout, rng_state=rng_state)
     for content, state in iterator:
         assert (
             "text" in content or "content" in content
@@ -250,7 +256,9 @@ def tokenize(
             name=tokenizer_type,
             path=tokenizer_path,
             tokenizers=tokenizers,
-            dropout=dropout
+            dropout=dropout, 
+            rng_state=tokenizer.rng.bit_generator.state,
+            seed=seed,
         )
 
 
@@ -373,14 +381,9 @@ def pack_tokens(
     for i, (tokens, state) in enumerate(iterator):
         end_token = start_token
         sample_is_read = False
-        # If start_token is beyond current tokens, it means the rewind 
-        # should have landed in the previous sample or we reached the end.
-        if start_token >= len(tokens):
-            start_token = 0
-            sample_is_read = True
-            previous_state = state
-            continue # Skip to the next sequence in the iterator
         while not sample_is_read:
+            # TODO: this is problematic with the supertokenizer approach
+            # print(start_token, end_token, len(tokens), len(buffer), buffer_size)
             assert start_token < len(
                 tokens
             ), f"Start token index {start_token} bigger than sequence {len(tokens)}"
@@ -655,7 +658,9 @@ def build_dataloader(
         tokenizer_state["name"],
         tokenizer_state["path"],
         tokenizer_state["tokenizers"],
-        tokenizer_state["dropout"]
+        tokenizer_state.get("dropout", 0),
+        tokenizer_state.get("rng_state", None),
+        tokenizer_state.get("seed", 42),
     )
 
     data_it = pack_tokens(

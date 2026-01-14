@@ -291,7 +291,7 @@ class CheckpointManager:
         dcp.load(state_dict, checkpoint_id=path)
         logger.info("State dict loaded.")
 
-        logger.info("Reloading model and optim")
+        logger.info(f"Reloading model and optim from {path}")
 
         set_state_dict(
             model,
