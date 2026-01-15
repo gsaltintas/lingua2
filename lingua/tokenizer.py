@@ -63,21 +63,16 @@ class Tokenizer(abc.ABC):
                 logger.warning(f"Failed to download super mapping from HF Hub {repo_id}. Trying local path {mapping_path}")
         assert os.path.isfile(mapping_path), mapping_path
         with open(mapping_path, "r") as f:
-            self.mapping = json.load(f)
+            mapping = json.load(f)
+        self.mapping = {int(k): v for k, v in mapping.items()}
         logger.info(f"Loaded super mapping from {mapping_path}")
 
     def encode_to_supermapping(self, tokens: List[str], add_bos: bool, add_eos: bool) -> List[int]:
         ids = []
         token_ids = self.encode(tokens, add_bos=add_bos, add_eos=add_eos)
         if len(self.mapping) == 0:
-            return ids
-        for id_ in token_ids:
-            token_id = self.mapping.get(str(id_), None)
-            if token_id is not None:
-                ids.append(token_id)
-            else:
-                logger.warning(f"Token {id_} not found in super mapping.")
-        return ids
+            return token_ids
+        return [self.mapping[tid] for tid in token_ids if tid in self.mapping ]
 
 class MockTokenizer(Tokenizer):
     n_words: int = 256
@@ -537,7 +532,7 @@ class TekkenTokenizer(Tokenizer):
 class SupersetTokenizer(Tokenizer):
     n_words: int = 851586
     def __init__(self, tokenizers: List[Dict[str, str]], rng_state: Dict[str, Any] = None):
-        self.tokenizers = []
+        self.tokenizers = {}
         ## todo: need to load mappings too
         import os
         for tokenizer_info in tokenizers:
@@ -562,7 +557,7 @@ class SupersetTokenizer(Tokenizer):
                     tokenizer.load_supermapping(f"{os.environ.get('PROJECT')}/tokenizers/super_mappings", encoding_path)
                 else:
                     logger.info(f"Not loading supermapping for the tokenizer {path}")
-                self.tokenizers.append(tokenizer)
+                self.tokenizers[f"{name}/{path}"] = tokenizer
             except Exception as e:
                 logger.error("Error loading tokenizer %s from  %s. %s",path, name, e)
         if len(self.tokenizers) == 0:
@@ -600,12 +595,14 @@ class SupersetTokenizer(Tokenizer):
         )
 
     def encode(self, tokens, add_bos, add_eos):
-        tokenizer = self.rng.choice(self.tokenizers)
+        tokenizer_key = self.rng.choice(list(self.tokenizers.keys()))
+        tokenizer = self.tokenizers[tokenizer_key]
         ids = tokenizer.encode_to_supermapping(tokens, add_bos=False, add_eos=False)   
         if add_bos:
             ids = [self.bos_id] + ids
         if add_eos:
             ids = ids + [self.eos_id]
+        # logger.debug(f"Selected tokenizer {tokenizer_key}, length of ids: {len(ids)}, add_bos: {add_bos}, add_eos: {add_eos}")
         return ids
 
     def decode(self, tokens: List[int],skip_special_tokens:bool=None):
