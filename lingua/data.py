@@ -305,10 +305,9 @@ def choose_source(
             source_to_state=source_to_state,
             rng_state=rng.bit_generator.state,
         )
-        global_rank = int(os.environ["RANK"])
-        local_rank = int(os.environ["LOCAL_RANK"])
 
         if print_docs:
+            global_rank = int(os.environ.get("RANK", 0))
             print(f"Rank {global_rank} - Chosen Source: {source_choice} | Source State: {state}")
         if dump_docs:
             dump_path = Path(dump_dir)/f"rank_{global_rank}.jsonl"
