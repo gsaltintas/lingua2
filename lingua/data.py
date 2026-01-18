@@ -249,6 +249,9 @@ def tokenize(
         content_key = "text" if ("text" in content) else "content"
         text = content[content_key]
         tokens = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos)
+        rng_state = None
+        if hasattr(tokenizer, "rng"):
+            rng_state = tokenizer.rng.bit_generator.state
         yield tokens, TokenizerState(
             it_state=state,
             add_bos=add_bos,
@@ -257,7 +260,7 @@ def tokenize(
             path=tokenizer_path,
             tokenizers=tokenizers,
             dropout=dropout, 
-            rng_state=tokenizer.rng.bit_generator.state,
+            rng_state=rng_state,
             seed=seed,
         )
 
