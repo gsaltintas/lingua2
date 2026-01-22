@@ -204,7 +204,8 @@ class CheckpointManager:
         model,
         optimizer,
     ):
-        model_sd, optim_sd = get_state_dict(model, optimizer)
+        options = StateDictOptions(cpu_offload=True, full_state_dict=False)
+        model_sd, optim_sd = get_state_dict(model, optimizer, options=options)
         return {"model": model_sd, "optim": optim_sd}
 
     def save(
