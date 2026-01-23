@@ -5,18 +5,17 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
-from torch.nn.attention.flex_attention import create_block_mask, BlockMask
-
 from torch.distributed._tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import (
     ColwiseParallel,
+    PrepareModuleInput,
     RowwiseParallel,
     SequenceParallel,
-    PrepareModuleInput,
     parallelize_module,
 )
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask
+from xformers.ops import AttentionBias, fmha
 
-from xformers.ops import fmha, AttentionBias
 from lingua.transformer import (
     BaseTransformer,
     BaseTransformerArgs,
@@ -78,6 +77,8 @@ class LMTransformer(BaseTransformer):
         super().__init__(args)
         self.weight_tying = args.weight_tying
         self.sliding_window = args.sliding_window
+        self.use_factorized_embeddings = args.use_factorized_embeddings
+        self.factorized_embedding_dim = args.factorized_embedding_dim
 
         assert args.vocab_size > 0
 
@@ -134,26 +135,69 @@ class LMTransformer(BaseTransformer):
             return logits
 
     def reset_parameters(self, init_std=None):
-        # Either use fixed base std or sqrt model dim
         super().reset_parameters()
-        init_std = init_std or (self.dim ** (-0.5))
+        base_std = init_std or (self.dim ** (-0.5))
         self.norm.reset_parameters()
-        nn.init.trunc_normal_(
-            self.tok_embeddings.weight,
-            mean=0.0,
-            std=init_std,
-            a=-3 * init_std,
-            b=3 * init_std,
-        )
-        if not self.weight_tying:
+        
+        if self.use_factorized_embeddings:
+            # First layer: vocab -> factorized_dim, use factorized_dim for std
+            factorized_std = self.factorized_embedding_dim ** (-0.5)
             nn.init.trunc_normal_(
-                self.output.weight,
+                self.tok_embeddings[0].weight,
                 mean=0.0,
-                std=init_std,
-                a=-3 * init_std,
-                b=3 * init_std,
+                std=factorized_std,
+                a=-3 * factorized_std,
+                b=3 * factorized_std,
             )
-
+            
+            # Second layer: factorized_dim -> model_dim, back to fan_in style init'n
+            projection_std = base_std 
+            nn.init.trunc_normal_(
+                self.tok_embeddings[1].weight, 
+                mean=0.0,
+                std=projection_std,
+                a=-3 * projection_std,
+                b=3 * projection_std,
+            )
+        else:
+            # Original single embedding initialization
+            nn.init.trunc_normal_(
+                self.tok_embeddings.weight,
+                mean=0.0,
+                std=base_std,
+                a=-3 * base_std,
+                b=3 * base_std,
+            )
+        
+        if not self.weight_tying:
+            if self.use_factorized_embeddings:
+                # First layer: model_dim -> factorized_dim
+                nn.init.trunc_normal_(
+                    self.output[0].weight,
+                    mean=0.0,
+                    std=base_std,
+                    a=-3 * base_std,
+                    b=3 * base_std,
+                )
+                
+                # Second layer: factorized_dim -> vocab_size
+                # Use factorized_std to match the input dimension
+                output_std_2 = self.factorized_embedding_dim ** (-0.5)
+                nn.init.trunc_normal_(
+                    self.output[1].weight,
+                    mean=0.0,
+                    std=output_std_2,
+                    a=-3 * output_std_2,
+                    b=3 * output_std_2,
+                )
+            else:
+                nn.init.trunc_normal_(
+                    self.output.weight,
+                    mean=0.0,
+                    std=base_std,
+                    a=-3 * base_std,
+                    b=3 * base_std,
+                )
 
 # Optional policy for activation checkpointing. With None, we stick to the default (defined distributed.py: default_no_recompute_ops)
 def get_no_recompute_ops():
