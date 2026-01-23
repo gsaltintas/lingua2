@@ -70,6 +70,8 @@ class LMTransformerArgs(BaseTransformerArgs):
 
     sliding_window: Optional[int] = None
 
+    use_factorized_embeddings: bool = False
+    factorized_embedding_dim: Optional[int] = 0
 
 class LMTransformer(BaseTransformer):
     def __init__(self, args: LMTransformerArgs):
@@ -79,18 +81,31 @@ class LMTransformer(BaseTransformer):
 
         assert args.vocab_size > 0
 
-        self.tok_embeddings = torch.nn.Embedding(args.vocab_size, args.dim)
+        if args.use_factorized_embeddings:
+            assert args.factorized_embedding_dim > 0, "factorized_embedding_dim must be > 0 when using factorized embeddings"
+            self.tok_embeddings = nn.Sequential(
+                nn.Embedding(args.vocab_size, args.factorized_embedding_dim),
+                nn.Linear(args.factorized_embedding_dim, args.dim, bias=False),
+            )
+        else:
+            self.tok_embeddings = torch.nn.Embedding(args.vocab_size, args.dim)
 
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
 
         if args.weight_tying:
             self.output = TiedLinear(self.tok_embeddings)
         else:
-            self.output = nn.Linear(
-                args.dim,
-                args.vocab_size,
-                bias=False,
-            )
+            if args.use_factorized_embeddings:
+                self.output = nn.Sequential(
+                    nn.Linear(args.dim, args.factorized_embedding_dim, bias=False),
+                    nn.Linear(args.factorized_embedding_dim, args.vocab_size, bias=False),
+                )
+            else:
+                self.output = nn.Linear(
+                    args.dim,
+                    args.vocab_size,
+                    bias=False,
+                )
 
     def forward(
         self,
