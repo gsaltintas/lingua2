@@ -1,5 +1,8 @@
 # use with apps/main/configs/moto/base.yaml
 dump_dir: /fsx/craffel/lingua_logs/flexitok_superset_tokenizer
+grad_acc_steps: 16
+data:
+  batch_size: 2
 
 model:
   vocab_size: 851586
