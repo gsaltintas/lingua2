@@ -1,5 +1,6 @@
 # use with apps/main/configs/moto/base.yaml, apps/main/configs/moto/superset_tokenizer.yaml
 dump_dir: /fsx/craffel/lingua_logs/flexitok_superset_albert
+name: flexitok_llama_supertokenizer_albert
 
 model:
   use_factorized_embeddings: True

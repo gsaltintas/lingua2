@@ -1,5 +1,5 @@
 dump_dir: /fsx/craffel/lingua_logs/flexitok_llama/
-name: moto
+name: flexitok_llama
 steps: 100_000
 probe_freq: null
 seed: 777
@@ -7,19 +7,13 @@ grad_acc_steps: 8
 
 
 optim:
-  lr: 0.001
+  lr: 1e-3
   weight_decay: 0.1
   epsilon: 1.0e-08
-  clip: 1.0
   scheduler: cosine
   warmup: 2000
-  lr_min_ratio: 1.0e-06
-# optim:
-  # lr: 3e-3
-  # weight_decay: 0.033
-  # warmup: 5000
-  # lr_min_ratio: 0.000001
-  # clip: 1.0
+  lr_min_ratio: 0.000001
+  clip: 1.0
 
 distributed:
   fsdp_type: full_shard
@@ -34,7 +28,7 @@ model:
   n_layers: 25
   n_heads: 16
   weight_tying: false
-  
+
 data:
   root_dir: /scratch/craffel/lingua/data/flexitok/
   sources:
@@ -81,7 +75,7 @@ checkpoint:
   init_ckpt_path: 
   dump:
     every: 1000000
-    keep: 3
+    keep: -1
   eval:
     every: 1000000
     keep: -1
@@ -99,7 +93,7 @@ eval:
       - arc_easy
       - arc_challenge
 
-      # --- MMLU / Base 44 (Multi-subject Knowledge) ---
+      # --- MMLU / Base 44 ---
       - include_base_44_arabic
       # no czech, swedish, danish
       - include_base_44_chinese
@@ -119,7 +113,7 @@ eval:
       - include_base_44_turkish
       - include_base_44_vietnamese
 
-      # --- Belebele (Reading Comprehension) ---
+      # --- Belebele ---
       - belebele_arb_Arab
       - belebele_ces_Latn
       - belebele_zho_Hans
@@ -142,7 +136,7 @@ eval:
       - belebele_vie_Latn
       - belebele_eng_Latn  
 
-      # --- XNLI (Natural Language Inference) ---
+      # --- XNLI ---
       - xnli_ar
       - xnli_zh
       - xnli_de

@@ -1,6 +1,6 @@
 # use with apps/main/configs/moto/base.yaml
 dump_dir: /fsx/craffel/lingua_logs/flexitok_llama_bpe_dropout
-
+name: flexitok_llama_bpe_dropout
 
 data:
   tokenizer:

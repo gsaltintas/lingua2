@@ -1,5 +1,7 @@
 # use with apps/main/configs/moto/base.yaml
 dump_dir: /fsx/craffel/lingua_logs/flexitok_superset_tokenizer
+name: flexitok_llama_supertokenizer_albert
+
 grad_acc_steps: 16
 data:
   batch_size: 2
