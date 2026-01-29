@@ -74,10 +74,10 @@ profiling:
 checkpoint:
   init_ckpt_path: 
   dump:
-    every: 1000000
+    every: 10000
     keep: -1
   eval:
-    every: 1000000
+    every: 10000
     keep: -1
 
 logging:
