@@ -115,9 +115,10 @@ class ByteTokenizer(Tokenizer):
 
 
 class SentencePieceTokenizer(Tokenizer):
-    def __init__(self, model_path: str) -> None:
+    def __init__(self, model_path: str, alpha: float=0.0) -> None:
         assert os.path.isfile(model_path), model_path
         self.sp_model = SentencePieceProcessor(model_file=model_path)
+        self.alpha = alpha
 
         logger.info(f"Reloaded SentencePiece model from {model_path}")
 
@@ -133,8 +134,11 @@ class SentencePieceTokenizer(Tokenizer):
 
     def encode(self, s: str, add_bos: bool, add_eos: bool):
         assert type(s) is str
+        # s.encode('New York', out_type=str, enable_sampling=True, alpha=0.1, nbest_size=-1)
         tokens = (
-            [self.bos_id] * add_bos + self.sp_model.encode(s) + [self.eos_id] * add_eos
+            [self.bos_id] * add_bos 
+            + self.sp_model.encode(s, enable_sampling=self.alpha>0, alpha=self.alpha, nbest_size=-1) 
+            + [self.eos_id] * add_eos
         )
         return tokens
 
@@ -565,8 +569,12 @@ class SupersetTokenizer(Tokenizer):
         
         logger.info(f"Number of tokenizers loaded: {len(self.tokenizers)}")
         if rng_state is not None:
-            rng = np.random.default_rng()
-            rng.bit_generator.state = rng_state
+            # import code; code.interact(local=dict(globals(), **locals()))
+            if isinstance(rng_state, int):
+                rng = np.random.default_rng(seed=rng_state)
+            else:
+                rng = np.random.default_rng()
+                rng.bit_generator.state = rng_state
             self.rng = rng
             logger.info("Restored RNG state for supertokenizer.")
         else:
@@ -617,7 +625,7 @@ def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] 
     elif name == "mock":
         return MockTokenizer()
     elif name == "sp":
-        return SentencePieceTokenizer(path)
+        return SentencePieceTokenizer(path, alpha=dropout)
     elif name == "tiktoken":
         return TikTokenTokenizer(path)
     elif name == "huggingface" and "byt5" in path:

@@ -1,0 +1,11 @@
+# use with apps/main/configs/flexitok/llama_1b_base.yaml
+# also first download the tokenizer file
+# hf download facebook/xglm-564M  --include sentencepiece.bpe.model --local-dir=/fsx/craffel/lingua_logs/flexitok_subword_regularization/
+dump_dir: /fsx/craffel/lingua_logs/flexitok_subword_regularization
+name: flexitok_subword_regularization
+
+data:
+  tokenizer:
+    name: sp
+    path: /fsx/craffel/lingua_logs/flexitok_subword_regularization/sentencepiece.bpe.model
+    dropout: 0.1
