@@ -1,4 +1,4 @@
-# use with apps/main/configs/moto/base.yaml
+# use with apps/main/configs/flexitok/llama_1b_base.yaml
 dump_dir: /fsx/craffel/lingua_logs/flexitok_superset_tokenizer
 name: flexitok_llama_supertokenizer
 
