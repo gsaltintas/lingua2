@@ -366,6 +366,7 @@ def train(args: TrainArgs):
         nwords_since_last_log = 0
         time_last_log = timer()
         gc.collect()
+        saved = False
         while train_state.step < args.steps:
             # We constrain train_state.acc_step to be in range 0 to args.grad_acc_steps - 1
             train_state.acc_step += 1
@@ -547,7 +548,6 @@ def train(args: TrainArgs):
                     f"  pow: {gpu_mem_stats.power_draw/1000} W"
                 )
 
-            saved = False
             if every_n_steps(
                 train_state, args.checkpoint.dump.every, acc_step=0
             ) or every_n_steps(train_state, args.checkpoint.eval.every, acc_step=0):
