@@ -1,3 +1,8 @@
+"""
+Script to count tokens in JSONL files in parallel by chunk and segment. Each process will handle a specific segment of a chunk file, read only its assigned lines, tokenize the text, and count tokens and bytes. Results are aggregated by chunk and optionally by source.
+The script uses a multiprocessing Pool to efficiently utilize CPU cores and can handle large files by processing them in segments without loading entire files into memory.
+"""
+
 # PYTHONPATH=/home/gsa/lingua:$PYTHONPATH python scripts/count_tokens.py --tokenizer_name huggingface --tokenizer_path  gpt2 --add_bos --add_eos --chunks 1 --workers=64 --segments_per_chunk=16
 # PYTHONPATH=/home/gsa/lingua:$PYTHONPATH python scripts/count_tokens.py --tokenizer_name huggingface --tokenizer_path  meta-llama/Llama-3.2-1B --add_bos --add_eos --chunks 1 --workers=64 --segments_per_chunk=16
 # PYTHONPATH=/home/gsa/lingua:$PYTHONPATH python scripts/count_tokens.py --tokenizer_name huggingface --tokenizer_path  google/gemma-2-2b --add_bos --add_eos --chunks 1 --workers=64 --segments_per_chunk=16
