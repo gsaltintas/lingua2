@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenizerArgs:
-    name: str = "bytes"
+    name: str = "" #"bytes"
     path: Optional[str] = None
     tokenizers: Optional[List[Dict[str, Any]]] = None
     load_supermapping: Optional[bool] = False
@@ -54,6 +54,13 @@ class Tokenizer(abc.ABC):
             try:
                 assert os.environ.get("HF_HUB_OFFLINE") != "1"
                 repo_id = f"gsaltintas/supertokenizer-{path.replace('/', '-')}"
+                mapping_path = hf_hub.hf_hub_download(
+                    repo_id, f"{path.replace('/', '--')}_super_mapping.json"
+                )
+                logger.info(f"Downloaded super mapping from HF Hub {repo_id} to {mapping_path}")
+            except RepositoryNotFoundError as e::
+                assert os.environ.get("HF_HUB_OFFLINE") != "1"
+                repo_id = f"flexitok/supertokenizer-{path.replace('/', '-')}"
                 mapping_path = hf_hub.hf_hub_download(
                     repo_id, f"{path.replace('/', '--')}_super_mapping.json"
                 )
@@ -601,9 +608,19 @@ class SupersetTokenizer(Tokenizer):
         logger.info(
             "Setting eos_token: %s with id %d.", self.eos_token, self.eos_id
         )
-
-    def encode(self, tokens, add_bos, add_eos):
-        tokenizer_key = self.rng.choice(list(self.tokenizers.keys()))
+    def sample_tokenizer(self):
+        tokenizer_keys = list(self.tokenizers.keys())
+        tokenizer_choice = self.rng.choice(len(tokenizer_keys))
+        return tokenizer_choice, tokenizer_keys[tokenizer_choice]
+    
+    def encode(self, tokens, add_bos, add_eos, tokenizer_choice: Optional[int] = None):
+        if tokenizer_choice is not None:
+            tokenizer_keys = list(self.tokenizers.keys())
+            if tokenizer_choice >= len(tokenizer_keys):
+                raise ValueError(f"tokenizer_choice {tokenizer_choice} is out of range for available tokenizers {tokenizer_keys}")
+            tokenizer_key = tokenizer_keys[tokenizer_choice]
+        else:
+            tokenizer_choice, tokenizer_key = self.sample_tokenizer()
         tokenizer = self.tokenizers[tokenizer_key]
         ids = tokenizer.encode_to_supermapping(tokens, add_bos=False, add_eos=False)   
         if add_bos:

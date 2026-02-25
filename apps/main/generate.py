@@ -1,22 +1,28 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-import time
 from typing import List, Optional
 
 import torch
-from torch import nn
-from tqdm import tqdm
-
-from omegaconf import OmegaConf
-from torch.nn import functional as F
 import xformers
+from numpy import log
+from omegaconf import OmegaConf
+from torch import nn
+from torch.nn import functional as F
+from torch.nn.attention.flex_attention import create_block_mask
+from tqdm import tqdm
 
 from apps.main.transformer import LMTransformer, LMTransformerArgs
 from lingua.args import dataclass_from_dict
 from lingua.checkpoint import CONSOLIDATE_NAME
-from lingua.tokenizer import Tokenizer, build_tokenizer
+from lingua.tokenizer import (
+    SupersetTokenizer,
+    Tokenizer,
+    TokenizerArgs,
+    build_tokenizer,
+)
 from lingua.transformer import (
     Attention,
     causal_mask,
@@ -24,7 +30,6 @@ from lingua.transformer import (
     lengths_to_local_ids,
     lengths_to_start_ids,
 )
-from torch.nn.attention.flex_attention import create_block_mask
 
 
 def sample_top_p(probs: torch.Tensor, p: float) -> torch.Tensor:
@@ -322,11 +327,15 @@ class PackedCausalTransformerGenerator:
         return out
 
     @torch.inference_mode()
-    def generate(self, prompts):
+    def generate(self, prompts, tokenizer_choices: List[int] = None):
         # Tokenize
-        prompts = [
-            self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False) for p in prompts
-        ]
+        # import code; code.interact(local=locals() | globals())
+        if isinstance(self.tokenizer, SupersetTokenizer) and tokenizer_choices:
+            prompts = [self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
+        else:
+            prompts = [
+                self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False) for p in prompts
+            ]
         # Truncate
         max_seqlen = (
             self.max_tokens
@@ -406,11 +415,15 @@ def load_consolidated_model_and_tokenizer(
     consolidated_path,
     model_cls=LMTransformer,
     model_args_cls=LMTransformerArgs,
+    tokenizer_args: Optional[TokenizerArgs] = None,
 ):
     ckpt_path = Path(consolidated_path)
     config = ckpt_path / "params.json"
     config = OmegaConf.load(config)
-
+    # import code; code.interact(local=locals()|globals() )
+    if tokenizer_args is not None:
+        config.data.tokenizer = OmegaConf.merge(config.data.tokenizer, tokenizer_args)
+        print(f"Overriding tokenizer config with {tokenizer_args}")
     param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[
         config.distributed.model_dtype
     ]
