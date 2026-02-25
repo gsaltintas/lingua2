@@ -23,7 +23,10 @@ class TokenizerArgs:
     tokenizers: Optional[List[Dict[str, Any]]] = None
     load_supermapping: Optional[bool] = False
     dropout: float = 0.0
+    # following are needed for supertokenizer
     seed: Optional[int] = 42
+    superset_code_name: Optional[str] = "super_vocab"
+    n_words: Optional[int] = None 
 
 
 class Tokenizer(abc.ABC):
@@ -44,7 +47,7 @@ class Tokenizer(abc.ABC):
         """Return the offsets of the tokens in the original text. Only used for evaluation."""
         pass
 
-    def load_supermapping(self, base_path: str, path: str) -> None:
+    def load_supermapping(self, base_path: str, path: str, superset_code_name: str = "super_vocab") -> None:
         import json
 
         mapping_path = Path(base_path, f"{path.replace('/', '--')}_super_mapping.json")
@@ -53,12 +56,22 @@ class Tokenizer(abc.ABC):
 
             try:
                 assert os.environ.get("HF_HUB_OFFLINE") != "1"
+                repo_id = path
+                # e.g. fineweb2_hq/flexitok--bpe_arb_Arab_8000_super_mapping.json
+                # import code; code.interact(local=locals()|globals())
+                mapping_path = hf_hub.hf_hub_download(
+                    repo_id, f"{superset_code_name}/{path.replace('/', '--')}_super_mapping.json"
+                )
+                logger.info(f"Downloaded super mapping from HF Hub {repo_id} to {mapping_path}")
+            ## backward compatibility for old path format
+            except hf_hub.errors.RepositoryNotFoundError as e:
+                assert os.environ.get("HF_HUB_OFFLINE") != "1"
                 repo_id = f"gsaltintas/supertokenizer-{path.replace('/', '-')}"
                 mapping_path = hf_hub.hf_hub_download(
                     repo_id, f"{path.replace('/', '--')}_super_mapping.json"
                 )
                 logger.info(f"Downloaded super mapping from HF Hub {repo_id} to {mapping_path}")
-            except RepositoryNotFoundError as e::
+            except hf_hub.errors.RepositoryNotFoundError as e:
                 assert os.environ.get("HF_HUB_OFFLINE") != "1"
                 repo_id = f"flexitok/supertokenizer-{path.replace('/', '-')}"
                 mapping_path = hf_hub.hf_hub_download(
@@ -542,8 +555,10 @@ class TekkenTokenizer(Tokenizer):
 
 class SupersetTokenizer(Tokenizer):
     n_words: int = 851586
-    def __init__(self, tokenizers: List[Dict[str, str]], rng_state: Dict[str, Any] = None):
+    def __init__(self, tokenizers: List[Dict[str, str]], rng_state: Dict[str, Any] = None, superset_code_name: str = "super_vocab", n_words: Optional[int] = None):
         self.tokenizers = {}
+        self.superset_code_name = superset_code_name
+        self.n_words = n_words if n_words is not None else self.n_words
         ## todo: need to load mappings too
         import os
         for tokenizer_info in tokenizers:
@@ -565,7 +580,7 @@ class SupersetTokenizer(Tokenizer):
                     encoding_path = f"mistralai/{path}"
                 if load_supermapping:
                     logger.info(f"Loading supermapping for the tokenizer {path}")
-                    tokenizer.load_supermapping(f"{os.environ.get('PROJECT')}/tokenizers/super_mappings", encoding_path)
+                    tokenizer.load_supermapping(f"{os.environ.get('PROJECT')}/tokenizers/super_mappings", encoding_path, superset_code_name)
                 else:
                     logger.info(f"Not loading supermapping for the tokenizer {path}")
                 self.tokenizers[f"{name}/{path}"] = tokenizer
@@ -590,18 +605,32 @@ class SupersetTokenizer(Tokenizer):
         import json
 
         import huggingface_hub as hf_hub
-        try:
-            assert os.environ.get("HF_HUB_OFFLINE") != "1"
-            repo_id = "gsaltintas/supertokenizer-super_vocab"
-            path = hf_hub.hf_hub_download(repo_id, "super_vocab.json")
-        except:
-            path = f"{os.environ.get('PROJECT')}/tokenizers/supertokenizer/super_vocab.json"
+        path = f"{os.environ.get('PROJECT')}/tokenizers/{superset_code_name}/super_vocab.json"
+        if not Path(path).exists():
+            try:
+                supervocab_repo_id = f"flexitok/supertokenizer-{superset_code_name}"
+                # flexitok/supertokenizer-fineweb2_hq
+                assert os.environ.get("HF_HUB_OFFLINE") != "1"
+                repo_id = supervocab_repo_id
+                path = hf_hub.hf_hub_download(repo_id, "super_vocab.json")
+                logger.info(f"Downloaded super mapping from HF Hub {repo_id} to {path}")
+            ## backward compatibility for old path format
+            except hf_hub.errors.RepositoryNotFoundError as e:
+                assert os.environ.get("HF_HUB_OFFLINE") != "1"
+                repo_id = "gsaltintas/supertokenizer-super_vocab"
+                path = hf_hub.hf_hub_download(repo_id, "super_vocab.json")
+            except hf_hub.errors.RepositoryNotFoundError as e:
+                raise ValueError(f"Failed to download super vocab from HF Hub. Tried repo_id {repo_id}. Error: {e}")
         with open(path, "r") as f:
             self.super_vocab = json.load(f)
         # align bos eos with llama
         self.bos_id = self.super_vocab.get(ALIGNED_BOS)
         self.eos_id = self.super_vocab.get("<|end_of_text|>")
         self.bos_token, self.eos_token = ALIGNED_BOS, "<|end_of_text|>"
+        if self.eos_id is None:
+            self.eos_id = self.super_vocab.get("</s>")
+            self.bos_token, self.eos_token = ALIGNED_BOS, "</s>"
+            
         logger.info(
             "Setting bos_token: %s with id %d.", self.bos_token, self.bos_id
         )
@@ -636,7 +665,7 @@ class SupersetTokenizer(Tokenizer):
     def get_token_offsets(self, text: str, tokens: List[int] | None = None) -> Tuple[List[str] | List[int]]:
         return None, None
 
-def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None, dropout: float = 0, rng_state: Dict[str, Any] = None) -> Tokenizer:
+def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None, dropout: float = 0, rng_state: Dict[str, Any] = None, superset_code_name: Optional[str] = None, n_words: Optional[int] = None) -> Tokenizer:
     if name == "bytes":
         return ByteTokenizer()
     elif name == "mock":
@@ -654,6 +683,6 @@ def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] 
     elif name == "tekken":
         return TekkenTokenizer()
     elif name == "supertokenizer":
-        return SupersetTokenizer(tokenizers, rng_state=rng_state)
+        return SupersetTokenizer(tokenizers, rng_state=rng_state, superset_code_name=superset_code_name, n_words=n_words)
     else:
         raise NotImplementedError(f"{name} tokenizer type is not implemented")

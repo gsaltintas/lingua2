@@ -112,6 +112,8 @@ class TokenizerState(TypedDict):
     dropout: Optional[float]
     rng_state: Dict[str, Any]       # for supertokenizer
     seed: Optional[int]
+    superset_code_name: Optional[str]
+    n_words: Optional[int]
 
 
 class PackTokensState(TypedDict):
@@ -226,6 +228,8 @@ def tokenize(
     dropout: float = 0.0,
     rng_state: Optional[Dict[str, Any]] = None,
     seed: Optional[int] = 42,
+    superset_code_name: Optional[str] = None,
+    n_words: Optional[int] = None,
 ):
     """
     Tokenizes text from an iterator of content-state pairs using a specified tokenizer.
@@ -241,7 +245,7 @@ def tokenize(
     """
     if rng_state is None:
         rng_state = np.random.default_rng(seed).bit_generator.state
-    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers, dropout=dropout, rng_state=rng_state)
+    tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers, dropout=dropout, rng_state=rng_state, superset_code_name=superset_code_name, n_words=n_words)
     for content, state in iterator:
         assert (
             "text" in content or "content" in content
@@ -262,6 +266,8 @@ def tokenize(
             dropout=dropout, 
             rng_state=rng_state,
             seed=seed,
+            superset_code_name=superset_code_name,
+            n_words=n_words,
         )
 
 
@@ -588,6 +594,8 @@ def init_state(
     file_pattern: str = TRAIN_DATA_FILE_PATTERN,
     tokenizers: Optional[Dict[str, str]] = None,
     dropout: float = 0.0,
+    superset_code_name:Optional[str] = None,
+    n_words: Optional[int] = None,
 ):
     multi_choice_state = init_choice_state(
         root_dir=root_dir, sources=sources, seed=seed, rank=rank, world_size=world_size, file_pattern=file_pattern
@@ -599,7 +607,9 @@ def init_state(
         name=tokenizer_name,
         path=tokenizer_path,
         tokenizers=tokenizers,
-        dropout=dropout
+        dropout=dropout,
+        superset_code_name=superset_code_name,
+        n_words=n_words,
     )
     pack_state = PackTokensState(
         start_token=0,
@@ -663,6 +673,8 @@ def build_dataloader(
         tokenizer_state.get("dropout", 0),
         tokenizer_state.get("rng_state", None),
         tokenizer_state.get("seed", 42),
+        superset_code_name=tokenizer_state.get("superset_code_name", None),
+        n_words=tokenizer_state.get("n_words", None),
     )
 
     data_it = pack_tokens(
@@ -787,6 +799,8 @@ def init_dataloader_state_from_args(
         add_eos=args.add_eos,
         tokenizers=args.tokenizer.tokenizers,
         dropout=args.tokenizer.dropout,
+        superset_code_name=args.tokenizer.superset_code_name,
+        n_words=args.tokenizer.n_words,
     )
 
 
