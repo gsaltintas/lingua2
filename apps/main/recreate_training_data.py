@@ -2,9 +2,9 @@
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 import os
 
-dump_data = False
-dump_docs=False
 report_bytes=os.environ.get("REPORT_BYTES", "False") == "True"
+dump_data=os.environ.get("DUMP_DATA", "False") == "True"
+dump_docs=os.environ.get("DUMP_DOCS", "False") == "True"
 import gc
 import json
 import logging
