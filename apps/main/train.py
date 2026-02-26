@@ -1,10 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
-from copy import deepcopy
 import gc
 import logging
 import os
+from copy import deepcopy
+
+from lingua.transformer import cross_entropy
+
+TRACK_ACCURACY = os.environ.get("TRACK_ACCURACY", "False") == "True"
 import sys
 import time
 from contextlib import ExitStack
@@ -14,15 +18,24 @@ from timeit import default_timer as timer
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from omegaconf import OmegaConf
 import torch
 import torch.distributed
 import torch.nn.functional as F
+import wandb
 import xformers.profiler
-from torch.optim import lr_scheduler
+from omegaconf import OmegaConf
 from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint.stateful import Stateful
+from torch.optim import lr_scheduler
 
+from apps.main.transformer import (
+    LMTransformer,
+    LMTransformerArgs,
+    build_fsdp_grouping_plan,
+    get_no_recompute_ops,
+    get_num_flop_per_token,
+    tp_parallelize,
+)
 from lingua.args import dataclass_from_dict, dump_config, flatten_dict
 from lingua.checkpoint import (
     CheckpointArgs,
@@ -59,20 +72,10 @@ from lingua.metrics import (
     get_num_params,
 )
 from lingua.optim import OptimArgs, build_optimizer
-from lingua.profiling import ProfilerArgs, maybe_run_profiler
-from lingua.tokenizer import build_tokenizer
-from apps.main.transformer import (
-    LMTransformer,
-    LMTransformerArgs,
-    build_fsdp_grouping_plan,
-    get_no_recompute_ops,
-    get_num_flop_per_token,
-    tp_parallelize,
-)
 from lingua.probe import AutoProbeD
+from lingua.profiling import ProfilerArgs, maybe_run_profiler
 from lingua.stool import StoolArgs, launch_job
-
-import wandb
+from lingua.tokenizer import build_tokenizer
 
 logger = logging.getLogger()
 
@@ -434,8 +437,12 @@ def train(args: TrainArgs):
                 assert (
                     next(model.parameters()).grad is None
                 ), "Probe model shouldn't have grads at this point"
-
-            loss = model(input_ids, labels)
+            if TRACK_ACCURACY:
+                outputs = model(input_ids)
+                loss = cross_entropy(outputs, labels)
+                accuracy = (outputs.argmax(dim=-1) == labels).float().mean()
+            else:
+                loss = model(input_ids, labels)
 
             # We scale loss with grad_acc_steps so the gradient is the same
             # regardless of grad_acc_steps
@@ -526,6 +533,8 @@ def train(args: TrainArgs):
 
                 to_sync = {}
                 to_sync["loss/out"] = loss.item()
+                if TRACK_ACCURACY:
+                    to_sync["accuracy/out"] = accuracy.item()
                 metrics.update(dist_mean_dict(to_sync))
 
                 if get_is_master():
@@ -538,6 +547,7 @@ def train(args: TrainArgs):
                     f"step: {train_state.step}"
                     f"  acc: {train_state.acc_step}"
                     f"  loss: {round(loss.item(),4):>7}"
+                    f"  accuracy: {accuracy.item():>7}" if TRACK_ACCURACY else ""
                     f"  grad: {grad_norm:.2e}"
                     f"  flops: {FLOPS:.2e}"
                     f"  wps: {wps:.2e}"
