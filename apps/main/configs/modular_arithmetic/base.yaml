@@ -1,0 +1,94 @@
+# 1) download the dataset from flexitok/mod-arithmetic
+  #  hf download flexitok/mod-arithmetic  --local-dir=/scratch/gsa/data/modular_arithmetic/ --repo-type dataset
+#    hf download flexitok/mod-arithmetic  --local-dir=/scratch/craffel/lingua/data/modular_arithmetic  --repo-type dataset
+# 2) run
+# TRACK_ACCURACY=True  python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=bash script=apps.main.train config=["apps/main/configs/modular_arithmetic/base.yaml"]
+# TRACK_ACCURACY=True python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=sbatch script=apps.main.train config=["apps/main/configs/modular_arithmetic/base.yaml"]
+dump_dir: /fsx/craffel/lingua_logs/flexitok_modular_arithmetic2/
+name: flexitok_modular_arithmetic2
+# steps: 100_000
+probe_freq: null
+seed: 777
+grad_acc_steps: 1   # small model alrady
+
+steps: 100_000
+
+optim:
+  lr: 1e-3
+  weight_decay: 1.0      # HIGH weight decay is critical for grokking — this is the main knob
+  epsilon: 1.0e-08
+  scheduler: cosine
+  warmup: 1000           # shorter warmup, dataset is tiny
+  lr_min_ratio: 0.000001
+  clip: 1.0
+
+distributed:
+  fsdp_type: no_shard    # single GPU: no sharding needed; 2 GPU: change to full_shard
+  model_dtype: bf16
+  matmul_allow_tf32: true  # L40S supports tf32, free speedup
+  selective_activation_checkpointing: false
+  tp_size: 1
+  compile: true
+
+model:
+  dim: 256               
+  n_layers: 4            
+  n_heads: 4             
+  weight_tying: false
+
+data:
+  root_dir: /scratch/craffel/lingua/data/modular_arithmetic/
+  sources:
+    data: 1.
+    # mod_power_of_10: 
+    # mod_power_of_5: 
+    # mod_power_of_2: 
+    # mod_prime: 
+  batch_size: 512        # small sequences, crank up batch size — critical for grokking
+  prefetch_size: 128
+  seq_len: 16            # "a + b = c" is 4–8 tokens even with digit tokenization
+  n_views: 2             # no contrastive objective
+  load_async: true
+  add_eos: true
+  tokenizer:
+    name: huggingface
+    path: flexitok/mod-tokenizers-individual
+
+# quick training no need for profiling
+profiling:
+  run: false
+
+checkpoint:
+  init_ckpt_path: 
+  dump:
+    every: 1000
+    keep: 3
+  eval:
+    every: 1000
+    keep: 3
+
+logging:
+  freq: 1
+  wandb: 
+    project: moto-modular-arithmetic
+    entity: gsaltintas
+    tags: 
+      - pre-training
+      - modular-arithmetic
+    group: individual-digits
+    # group: llama-3.2
+    # name: Optional[str] = None
+    # notes: Optional[str] = None
+    # sync_tensorboard: true
+    # resume_from: Optional[str] = None
+
+# async_eval_gpus: 8
+# eval:
+#   harness:
+#     tasks:
+#       # --- TODO: later add this ---
+#       # - flexitok/mod-arithmetic
+#   generator:
+#     max_tokens: 16384
+#     dtype: bf16
+#     add_bos: False
