@@ -1,24 +1,24 @@
 # 1) download the dataset from flexitok/mod-arithmetic
   #  hf download flexitok/mod-arithmetic  --local-dir=/scratch/gsa/data/modular_arithmetic/ --repo-type dataset
-#    hf download flexitok/mod-arithmetic  --local-dir=/scratch/craffel/lingua/data/modular_arithmetic  --repo-type dataset
+  #  hf download flexitok/mod-arithmetic  --local-dir=/scratch/craffel/lingua/data/modular_arithmetic  --repo-type dataset
 # 2) run
-# TRACK_ACCURACY=True  python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=bash script=apps.main.train config=["apps/main/configs/modular_arithmetic/base.yaml"]
-# TRACK_ACCURACY=True python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=sbatch script=apps.main.train config=["apps/main/configs/modular_arithmetic/base.yaml"]
-dump_dir: /fsx/craffel/lingua_logs/flexitok_modular_arithmetic2/
+# python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=bash script=apps.main.train_answer_only config=["apps/main/configs/modular_arithmetic/base.yaml"]
+# python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=sbatch script=apps.main.train_answer_only config=["apps/main/configs/modular_arithmetic/base.yaml"]
+dump_dir: /fsx/craffel/lingua_logs/flexitok_modular_arithmetic-corrected/
 name: flexitok_modular_arithmetic2
 # steps: 100_000
 probe_freq: null
 seed: 777
 grad_acc_steps: 1   # small model alrady
 
-steps: 100_000
+steps: 5_000
 
 optim:
   lr: 1e-3
-  weight_decay: 1.0      # HIGH weight decay is critical for grokking — this is the main knob
+  weight_decay: 1.0    
   epsilon: 1.0e-08
   scheduler: cosine
-  warmup: 1000           # shorter warmup, dataset is tiny
+  warmup: 100        
   lr_min_ratio: 0.000001
   clip: 1.0
 
@@ -44,9 +44,9 @@ data:
     # mod_power_of_5: 
     # mod_power_of_2: 
     # mod_prime: 
-  batch_size: 512        # small sequences, crank up batch size — critical for grokking
+  batch_size: 512       
   prefetch_size: 128
-  seq_len: 16            # "a + b = c" is 4–8 tokens even with digit tokenization
+  seq_len: 256            # "a + b = c" is 4–8 tokens even with digit tokenization
   n_views: 2             # no contrastive objective
   load_async: true
   add_eos: true
@@ -59,7 +59,7 @@ profiling:
   run: false
 
 checkpoint:
-  init_ckpt_path: 
+  # init_ckpt_path: 
   dump:
     every: 1000
     keep: 3
