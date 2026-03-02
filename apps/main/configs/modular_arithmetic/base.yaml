@@ -1,5 +1,5 @@
 # 1) download the dataset from flexitok/mod-arithmetic
-  #  hf download flexitok/mod-arithmetic  --local-dir=/scratch/gsa/data/modular_arithmetic/ --repo-type dataset
+  #  hf download flexitok/mod-arithmetic  --local-dir=/scratch/gsa/data/modular_arithmetic/ --repo-type dataset 
   #  hf download flexitok/mod-arithmetic  --local-dir=/scratch/craffel/lingua/data/modular_arithmetic  --repo-type dataset
 # 2) run
 # python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=bash script=apps.main.train_answer_only config=["apps/main/configs/modular_arithmetic/base.yaml"]
@@ -10,6 +10,7 @@ name: flexitok_modular_arithmetic2
 probe_freq: null
 seed: 777
 grad_acc_steps: 1   # small model alrady
+track_source_metrics: true
 
 steps: 5_000
 
@@ -37,9 +38,26 @@ model:
   weight_tying: false
 
 data:
-  root_dir: /scratch/craffel/lingua/data/modular_arithmetic/
+  root_dir: /scratch/craffel/lingua/data/modular_arithmetic/data/
   sources:
-    data: 1.
+    mod_10: 0.0769
+    mod_100: 0.0769
+    mod_1000: 0.0771
+    mod_125: 0.0770
+    mod_16: 0.0769
+    mod_2: 0.0770
+    mod_25: 0.0769
+    mod_3: 0.0769
+    mod_32: 0.0768
+    mod_4: 0.0770
+    mod_5: 0.0769
+    mod_7: 0.0770
+    mod_8: 0.0768
+    # mod_power_of_10: .2315
+    # mod_power_of_2: .3847
+    # mod_power_of_5: .2303
+    # mod_prime: .1534
+    # data: 1.
     # mod_power_of_10: 
     # mod_power_of_5: 
     # mod_power_of_2: 

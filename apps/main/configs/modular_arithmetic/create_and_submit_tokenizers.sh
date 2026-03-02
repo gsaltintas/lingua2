@@ -37,12 +37,24 @@ for tokenizer in "${tokenizers[@]}"; do
 	safe_tokenizer="$(basename "${tokenizer}")"
 	safe_name="${safe_tokenizer}"
 	cfg_path="${ROOT_DIR}/${safe_name}.yaml"
+	batch_size=512
+	grad_acc_steps=1
 
+	gputype="l40s"
+	ngpu=1
+	if [[ "${tokenizer}" == *"5digit"* ]]; then
+		gputype="h100"
+		ngpu=2
+		batch_size=128
+		grad_acc_steps=4
+	fi
 	cat >"${cfg_path}" <<EOF
 name: mod_arith_${safe_name}
 dump_dir: /fsx/craffel/lingua_logs/modular_arithmetic/${safe_name}
+grad_acc_steps: ${grad_acc_steps}
 
 data:
+  batch_size: ${batch_size}
   tokenizer:
     name: huggingface
     path: ${tokenizer}
@@ -53,13 +65,9 @@ logging:
     name: ${safe_name}
 
 EOF
-	gputype="l40s"
-	if [[ "${tokenizer}" == *"5digit"* ]]; then
-		gputype="h100"
-	fi
 	cmd=(
 		python -m lingua.stool_ccdb
-		ngpu=1
+		ngpu=$ngpu
 		ncpu=4
 		mem=32G
 		time=480
