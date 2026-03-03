@@ -2,16 +2,19 @@
 # bash apps/main/configs/modular_arithmetic/create_and_submit_tokenizers.sh
 ROOT_DIR="apps/main/configs/modular_arithmetic"
 BASE_CONFIG="${ROOT_DIR}/base.yaml"
+export DUMP_DOCS="True"
+export DUMP_DOCS_MAX_SAMPLES=10
+export DUMP_DIR="/scratch/gsa/modular_arithmetic_tokenizer_dumps/"
 
 tokenizers=(
-	flexitok/mod-tokenizers-individual
-	flexitok/mod-tokenizers-ltr_3digit
-	flexitok/mod-tokenizers-ltr_2digit
-	flexitok/mod-tokenizers-ltr_4digit
+	# flexitok/mod-tokenizers-individual
+	# flexitok/mod-tokenizers-ltr_2digit
+	# flexitok/mod-tokenizers-rtl_2digit
+	# flexitok/mod-tokenizers-ltr_3digit
+	# flexitok/mod-tokenizers-ltr_4digit
 	flexitok/mod-tokenizers-ltr_5digit
-	flexitok/mod-tokenizers-rtl_2digit
-	flexitok/mod-tokenizers-rtl_3digit
-	flexitok/mod-tokenizers-rtl_4digit
+	# flexitok/mod-tokenizers-rtl_3digit
+	# flexitok/mod-tokenizers-rtl_4digit
 	flexitok/mod-tokenizers-rtl_5digit
 )
 # Set DRY_RUN=1 to only print commands without submitting jobs
@@ -44,7 +47,7 @@ for tokenizer in "${tokenizers[@]}"; do
 	ngpu=1
 	if [[ "${tokenizer}" == *"5digit"* ]]; then
 		gputype="h100"
-		ngpu=2
+		ngpu=1
 		batch_size=128
 		grad_acc_steps=4
 	fi

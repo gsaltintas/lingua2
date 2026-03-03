@@ -40,6 +40,7 @@ class StoolArgs:
     # data_dir: str = "/fsx/craffel/common-pile-chunked/"
     data_dir: str = "/scratch/gsa/data/flexitok/" 
     host: str = "killarney"  # The host to determine module load commands, e.g. killarney or hopper
+    gpu_type: str = "l40s"  # The type of GPU to request in sbatch command, e.g. l40s or h100
 
 SBATCH_COMMAND = """#!/bin/bash
 
@@ -50,14 +51,15 @@ SBATCH_COMMAND = """#!/bin/bash
 #SBATCH --job-name={name}
 #SBATCH --nodes={nodes}
 #SBATCH --ntasks-per-node=1          # crucial - only 1 task per dist per node!
-#SBATCH --gres=gpu:h100:{ngpus}
+#SBATCH --gres=gpu:{gpu_type}:{ngpus}
 #SBATCH --cpus-per-task={ncpu}
 #SBATCH --time={time}
 #SBATCH --mem={mem}
 #SBATCH --qos={priority}
 
-#SBATCH --output={dump_dir}/logs/%j.stdout
-#SBATCH --error={dump_dir}/logs/%j.stderr
+#SBATCH --output=/project/aip-craffel/gsa/.slurm/%j.out
+####SBATCH --output={dump_dir}/logs/%j.stdout
+####SBATCH --error={dump_dir}/logs/%j.stderr
 
 #SBATCH --begin=now+0minutes
 #SBATCH --mail-type=ALL
@@ -200,6 +202,8 @@ def modify_for_ccdb(args: StoolArgs):
         if data_conf.get("root_dir") is not None:
             data_conf["root_dir"] = args.config["data"]["root_dir"].replace("/scratch/craffel/lingua/data", "/scratch/gsa/data")
         args.config["data"] = data_conf 
+    if hasattr(args, "ckpt_dir") and args.ckpt_dir is not None:
+        args.ckpt_dir = args.ckpt_dir.replace("/fsx/craffel/lingua_logs", "/scratch/gsa/train")
     print(args.config["dump_dir"])
     # print(args.config["data"].get("tokenizer"))
 
@@ -293,7 +297,8 @@ module load mii/1.1.2 ucx/1.14.1"""
         priority=args.priority,
         copy_data_command=copy_data_command,
         activate_command=activate_command,
-        module_load_command=module_load_command
+        module_load_command=module_load_command,
+        gpu_type=args.gpu_type,
     )
 
     print("Writing sbatch command ...")
