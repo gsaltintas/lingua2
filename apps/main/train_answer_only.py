@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import gc
+import json
 import logging
 import os
 from contextlib import ExitStack
@@ -54,6 +55,9 @@ from lingua.tokenizer import TokenizerArgs, build_tokenizer
 
 logger = logging.getLogger()
 
+DUMP_DOCS = os.environ.get("DUMP_DOCS", "False") == "True"
+DUMP_DOCS_MAX_SAMPLES = int(os.environ.get("DUMP_DOCS_MAX_SAMPLES", "2"))
+# DUMP_DIR = os.environ.get("DUMP_DIR", "/scratch/gsa/train/dump-mod")
 
 @dataclass
 class QADataArgs:
@@ -160,7 +164,9 @@ def _build_example(
             parts = str(full_text).rsplit(" ", 1)
             question = (parts[0] + " ") if len(parts) > 1 else str(full_text)
         prompt_text = str(question)
-
+    # print(f"full_text: {full_text}")
+    # print(f"prompt_text: {prompt_text}")
+    # print(f"answer: {answer}")
     full_ids = _to_list(tokenizer.encode(str(full_text), add_bos=add_bos, add_eos=add_eos))
     prompt_ids = _to_list(tokenizer.encode(prompt_text, add_bos=add_bos, add_eos=False))
 
@@ -233,6 +239,73 @@ def _batch_iterator(args: TrainAnswerOnlyArgs, tokenizer):
     finally:
         for it in source_iters.values():
             it.close()
+
+
+def maybe_dump_training_batch(
+    tokenizer,
+    input_ids: torch.Tensor,
+    labels: torch.Tensor,
+    source_ids: torch.Tensor,
+    source_names: list[str],
+    step: int,
+    acc_step: int,
+    dump_dir: str,
+) -> None:
+    if not DUMP_DOCS:
+        return
+
+    effective_dump_dir = dump_dir 
+    if not effective_dump_dir:
+        return
+
+    rank = get_global_rank()
+    dump_path = Path(effective_dump_dir) / "training_docs" / f"rank_{rank}.jsonl"
+    dump_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cpu_input_ids = input_ids.detach().cpu()
+    cpu_labels = labels.detach().cpu()
+    cpu_source_ids = source_ids.detach().cpu()
+    n_samples = min(DUMP_DOCS_MAX_SAMPLES, cpu_input_ids.shape[0])
+
+    with open(dump_path, "a") as f_dump:
+        for sample_idx in range(n_samples):
+            input_id_list = [x for x in cpu_input_ids[sample_idx].tolist() if x != 2]
+            label_id_list = [x for x in cpu_labels[sample_idx].tolist() if x != 2 and x != -100]
+            label_id_valid = [token_id for token_id in label_id_list if token_id != -100]
+            source_id = int(cpu_source_ids[sample_idx].item())
+
+            row = {
+                "step": int(step),
+                "acc_step": int(acc_step),
+                "sample_idx": int(sample_idx),
+                "source_id": source_id,
+                "source_name": source_names[source_id] if 0 <= source_id < len(source_names) else None,
+                "input_ids": input_id_list,
+                "label_ids": label_id_list,
+            }
+
+            try:
+                row["input_text"] = tokenizer.decode(input_id_list, skip_special_tokens=False)
+            except TypeError:
+                try:
+                    row["input_text"] = tokenizer.decode(input_id_list)
+                except Exception:
+                    row["input_text"] = None
+            except Exception:
+                row["input_text"] = None
+
+            try:
+                row["label_text"] = tokenizer.decode(label_id_valid, skip_special_tokens=False)
+            except TypeError:
+                try:
+                    row["label_text"] = tokenizer.decode(label_id_valid)
+                except Exception:
+                    row["label_text"] = None
+            except Exception:
+                row["label_text"] = None
+
+            json.dump(row, f_dump)
+            f_dump.write("\n")
 
 
 
@@ -475,6 +548,16 @@ def train(args: TrainAnswerOnlyArgs):
             curr_lr = float(optimizer.param_groups[0]["lr"])
             data_load_start = timer()
             input_ids, labels, source_ids = next(data_iter)
+            maybe_dump_training_batch(
+                tokenizer,
+                input_ids,
+                labels,
+                source_ids,
+                source_names,
+                train_state.step,
+                train_state.acc_step,
+                args.dump_dir,
+            )
             data_load_time = round(timer() - data_load_start, 4)
 
             if every_n_steps(train_state, args.gc_collect_freq, acc_step=0):
