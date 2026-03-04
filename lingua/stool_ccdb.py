@@ -202,8 +202,8 @@ def modify_for_ccdb(args: StoolArgs):
         if data_conf.get("root_dir") is not None:
             data_conf["root_dir"] = args.config["data"]["root_dir"].replace("/scratch/craffel/lingua/data", "/scratch/gsa/data")
         args.config["data"] = data_conf 
-    if hasattr(args, "ckpt_dir") and args.ckpt_dir is not None:
-        args.ckpt_dir = args.ckpt_dir.replace("/fsx/craffel/lingua_logs", "/scratch/gsa/train")
+    if args.config.get("ckpt_dir", None) is not None:
+        args.config["ckpt_dir"] = args.config["ckpt_dir"].replace("/fsx/craffel/lingua_logs", "/scratch/gsa/train")
     print(args.config["dump_dir"])
     # print(args.config["data"].get("tokenizer"))
 

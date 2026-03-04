@@ -81,6 +81,7 @@ class EvalArgs:
     wandb: Optional[Any] = None
 
     global_step: Optional[int] = None  # for in-training evaluation
+    tokenizer: Optional[TokenizerArgs] = field(default=None)
 
 
 def all_dicts_same(dict_list):
@@ -114,18 +115,26 @@ class EvalHarnessLM(LM):
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         prompts, gen_args = zip(*[req.args for req in requests])
+        print(gen_args)
         assert all_dicts_same(gen_args), "Doesn't support different gen args for now"
         gen_args = gen_args[0]
         temperature = gen_args.get("temperature", 0.0)
         top_p = gen_args.get("top_p", None)
         top_k = gen_args.get("top_k", None)
         until = gen_args.get("until", [])
+        max_gen_toks = gen_args.get("max_gen_toks", None)
 
         self.generator.temperature = temperature
         self.generator.top_p = top_p
         self.generator.top_k = top_k
         self.generator.until = until
-        generations, _, _ = self.generator.generate(prompts)
+        prev_max_gen_len = self.generator.max_gen_len
+        if max_gen_toks is not None:
+            self.generator.max_gen_len = int(max_gen_toks)
+        try:
+            generations, _, _ = self.generator.generate(prompts)
+        finally:
+            self.generator.max_gen_len = prev_max_gen_len
         filtered_gen = []
         for g in generations:
             for e in until:
@@ -134,15 +143,32 @@ class EvalHarnessLM(LM):
         return filtered_gen
 
     def loglikelihood(self, requests: List[Instance]) -> List[Tuple[float, bool]]:
+        # still str 
         prompts, continuations = zip(*[req.args for req in requests])
         inputs = [req.args[0] + req.args[1] for req in requests]
+
         max_gen_len = self.generator.max_gen_len
         # We temporarily lower max gen len
         self.generator.max_gen_len = 1
-        _, lls, greedy = self.generator.generate(inputs)
+        if isinstance(self.generator.tokenizer, SupersetTokenizer):
+            processed_prompts = dict()
+            tokenizer_lst = []
+            for i, prompt in enumerate(prompts):
+                if prompt not in processed_prompts:
+                    tokenizer_choice, tokenizer_key = self.generator.tokenizer.sample_tokenizer()
+                    tokenizer_lst.append(tokenizer_choice)
+                    processed_prompts[prompt] = tokenizer_choice
+                else:
+                    tokenizer_lst.append(processed_prompts[prompt])
+            _, lls, greedy = self.generator.generate(inputs, tokenizer_choices=tokenizer_lst)
+        else:
+            _, lls, greedy = self.generator.generate(inputs)
         results = []
-        for p, ll, gr in zip(prompts, lls, greedy):
-            p_len = len(self.generator.tokenizer.encode(p, add_bos=False, add_eos=False))
+        for i,(p, ll, gr) in enumerate(zip(prompts, lls, greedy)):
+            if isinstance(self.generator.tokenizer, SupersetTokenizer):
+                p_len = len(self.generator.tokenizer.encode(p, add_bos=False, add_eos=False, tokenizer_choice=tokenizer_lst[i]))
+            else:
+                p_len = len(self.generator.tokenizer.encode(p, add_bos=False, add_eos=False))
             results.append((ll[p_len:].sum().item(), gr[p_len:].all().item()))
 
         self.generator.max_gen_len = max_gen_len
@@ -215,7 +241,10 @@ def eval_on_val(generator, val_args: ValidationArgs, train_cfg):
 
     return all_val_metrics
 
+
 def launch_eval(cfg: EvalArgs):
+    torch.backends.cuda.enable_cudnn_sdp(False)
+
     if not torch.distributed.is_initialized():
         setup_torch_distributed(DistributedArgs())
     if (
@@ -229,23 +258,38 @@ def launch_eval(cfg: EvalArgs):
         if not consolidate_path.exists() and get_global_rank() == 0:
             consolidate_path = consolidate_checkpoints(cfg.ckpt_dir)
 
+    run = None
+    if get_is_master():
+        if cfg.wandb is not None:
+            run = wandb.init(**cfg.wandb, config=asdict(cfg))
     Path(cfg.dump_dir).mkdir(parents=True, exist_ok=True)
     dump_config(cfg, Path(cfg.dump_dir) / "config.yaml", log_config=False)
 
     consolidate_path = str(consolidate_path)
+    # if dist.is_initialized():
+    #     print(f"Rank {dist.get_rank()} is using GPU {torch.cuda.current_device()}")
     torch.distributed.barrier()
     logger.info("Loading model")
     model, tokenizer, train_cfg = load_consolidated_model_and_tokenizer(
         consolidate_path,
         model_cls=LMTransformer,
         model_args_cls=LMTransformerArgs,
+        tokenizer_args=cfg.tokenizer,
     )
+    model = model.to(torch.bfloat16)
     logger.info("Model loaded")
     model.eval()
     generator = PackedCausalTransformerGenerator(cfg.generator, model, tokenizer)
 
     wrap = EvalHarnessLM(generator)
+    ckpt_path = Path(consolidate_path)
+    config = ckpt_path / "params.json"
+    config = OmegaConf.load(config)
+    # if 
     results = simple_evaluate(wrap, **asdict(cfg.harness))
+    if cfg.harness.log_samples and get_global_rank() == 0:
+        with open(Path(cfg.dump_dir) / "samples.json", "w") as f:
+            json.dump(results.get("samples", []), f)
     val_results =  None
     if cfg.validation:
         val_results = eval_on_val(generator, cfg.validation, train_cfg)
@@ -253,6 +297,11 @@ def launch_eval(cfg: EvalArgs):
         with open(Path(cfg.dump_dir) / "results.json", "w") as f:
             f.write(json.dumps(results, default=lambda x: str(type(x))))
         logger.info(f"All evaluation results: {results['results']}")
+        if run is not None:
+            # {"results": {"arc_challenge": {"alias": "arc_challenge", "acc,none": 0.24744027303754265, "acc_stderr,none": 0.01261035266329267, "acc_norm,none": 0.2551194539249147, "acc_norm_stderr,none": 0.012739038695202102}, "arc_easy": {"alias": "arc_ea
+            for task, res_ in results["results"].items():
+                log_dct = {f"{task}/{metric}".replace(",none", ""): val for metric, val in res_.items() if metric != "alias"}
+                wandb.log(log_dct)
         if val_results is not None:
             with open(Path(cfg.dump_dir) / "validation.json", "w") as f:
                 f.write(json.dumps(val_results))

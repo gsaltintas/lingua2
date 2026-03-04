@@ -193,7 +193,7 @@ class PackedCausalTransformerGenerator:
         self.current_doc_id, self.current_tok_id = None, None
         self.padded_doc_start = None
         self.prefill_mask = None
-        self.add_bos: bool = True
+        self.add_bos: bool = True if cfg.add_bos is None else bool(cfg.add_bos)
 
     def clear_cache(self, offset):
         for module in self.model.modules():
@@ -336,6 +336,15 @@ class PackedCausalTransformerGenerator:
             prompts = [
                 self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False) for p in prompts
             ]
+
+        empty_prompt_count = sum(1 for token_ids in prompts if len(token_ids) == 0)
+        if empty_prompt_count > 0:
+            raise ValueError(
+                f"Found {empty_prompt_count}/{len(prompts)} empty tokenized prompts. "
+                "This usually means supermapping dropped all prompt tokens (missing token mapping), "
+                "or add_bos=False left an empty prompt. "
+                "Check super_mapping coverage for prompt characters and/or set generator.add_bos=True."
+            )
         # Truncate
         max_seqlen = (
             self.max_tokens
@@ -345,7 +354,20 @@ class PackedCausalTransformerGenerator:
         max_prompt_len = self.max_prompt_len or min(
             max_seqlen - self.max_gen_len, self.max_tokens - self.max_gen_len
         )
+        if max_prompt_len <= 0:
+            raise ValueError(
+                f"Invalid prompt budget: max_prompt_len={max_prompt_len}. "
+                f"Got max_tokens={self.max_tokens}, max_gen_len={self.max_gen_len}, "
+                f"model.max_seqlen={max_seqlen}. "
+                "Increase generator.max_tokens or decrease generation max_gen_toks/max_gen_len."
+            )
         prompts = [p[-max_prompt_len:] for p in prompts]
+        empty_after_truncation = sum(1 for token_ids in prompts if len(token_ids) == 0)
+        if empty_after_truncation > 0:
+            raise ValueError(
+                f"Found {empty_after_truncation}/{len(prompts)} empty prompts after truncation. "
+                f"max_prompt_len={max_prompt_len}, max_tokens={self.max_tokens}, max_gen_len={self.max_gen_len}."
+            )
         # Account for the generation in lengths
         padded_lengths = [len(p) + self.max_gen_len for p in prompts]
         generation = []
@@ -354,7 +376,7 @@ class PackedCausalTransformerGenerator:
         it = batch_prompts(prompts, self.max_tokens, lengths=padded_lengths)
         if self.show_progress:
             it = tqdm(it)
-        for batch in it:
+        for batch_idx, batch in enumerate(it):
             n_seqs = len(batch)
             generated_tokens = [[] for _ in range(n_seqs)]
             is_done = [False for _ in range(n_seqs)]
@@ -384,8 +406,11 @@ class PackedCausalTransformerGenerator:
                 for seq_id, tok in enumerate(next_token.squeeze(0).tolist()):
                     if not is_done[seq_id]:
                         generated_tokens[seq_id].append(tok)
+                        decode_kwargs = {}
+                        if isinstance(self.tokenizer, SupersetTokenizer) and tokenizer_choices:
+                            decode_kwargs["tokenizer_choice"] = tokenizer_choices[batch_idx]
                         current_end_str = self.tokenizer.decode(
-                            generated_tokens[seq_id][-self.max_until_size :]
+                            generated_tokens[seq_id][-self.max_until_size :], **decode_kwargs
                         )
                         contains_end_string = any(
                             [e in current_end_str for e in self.until]
@@ -397,8 +422,10 @@ class PackedCausalTransformerGenerator:
                     break
 
                 current_token = next_token
-
-            generation.extend([self.tokenizer.decode(g) for g in generated_tokens])
+            decode_kwargs = {}
+            if isinstance(self.tokenizer, SupersetTokenizer) and tokenizer_choices:
+                decode_kwargs["tokenizer_choice"] = tokenizer_choices[batch_idx]
+            generation.extend([self.tokenizer.decode(g, **decode_kwargs) for g in generated_tokens])
 
             for p, logit in zip(
                 batch, prompt_logits.squeeze(0).split(lengths.tolist())
@@ -428,7 +455,7 @@ def load_consolidated_model_and_tokenizer(
         config.distributed.model_dtype
     ]
     model_args = dataclass_from_dict(model_args_cls, config.model, strict=False)
-    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path, config.data.tokenizer.tokenizers, config.data.tokenizer.dropout, config.data.tokenizer.seed)
+    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path, config.data.tokenizer.tokenizers, config.data.tokenizer.dropout, superset_code_name=config.data.tokenizer.superset_code_name, n_words=config.data.tokenizer.n_words)
     model = model_cls(model_args)
     st_dict = torch.load(ckpt_path / CONSOLIDATE_NAME, weights_only=True)
     model.load_state_dict(st_dict["model"])
