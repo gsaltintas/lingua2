@@ -76,6 +76,9 @@ class QADataArgs:
     n_views: int = 2
     prefetch_size: int = 64
     load_async: bool = True
+    suitable_tokenizer_key: str = "suitable_tokenizer"
+    suitable_tokenizer_probability: float = 0.0
+    suitable_tokenizer_map: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -144,6 +147,7 @@ def _build_example(
     text_key: str,
     question_key: str,
     answer_key: str,
+    tokenizer_choice: Optional[int] = None,
 ):
     full_text = row.get(text_key)
     if full_text is None:
@@ -164,11 +168,14 @@ def _build_example(
             parts = str(full_text).rsplit(" ", 1)
             question = (parts[0] + " ") if len(parts) > 1 else str(full_text)
         prompt_text = str(question)
-    # print(f"full_text: {full_text}")
-    # print(f"prompt_text: {prompt_text}")
-    # print(f"answer: {answer}")
-    full_ids = _to_list(tokenizer.encode(str(full_text), add_bos=add_bos, add_eos=add_eos))
-    prompt_ids = _to_list(tokenizer.encode(prompt_text, add_bos=add_bos, add_eos=False))
+    encode_kwargs: Dict[str, Any] = {"add_bos": add_bos, "add_eos": add_eos}
+    prompt_encode_kwargs: Dict[str, Any] = {"add_bos": add_bos, "add_eos": False}
+    if tokenizer_choice is not None:
+        encode_kwargs["tokenizer_choice"] = tokenizer_choice
+        prompt_encode_kwargs["tokenizer_choice"] = tokenizer_choice
+
+    full_ids = _to_list(tokenizer.encode(str(full_text), **encode_kwargs))
+    prompt_ids = _to_list(tokenizer.encode(prompt_text, **prompt_encode_kwargs))
 
     full_ids = full_ids[: seq_len + 1]
     if len(full_ids) < 2:
@@ -199,6 +206,81 @@ def _build_example(
     return input_ids, labels
 
 
+def _sample_row_tokenizer_choice(
+    row: Dict[str, Any],
+    tokenizer,
+    suitable_tokenizer_key: str,
+    suitable_tokenizer_probability: float,
+    suitable_tokenizer_map: Dict[str, str],
+) -> Optional[int]:
+    if not hasattr(tokenizer, "sample_tokenizer"):
+        return None
+
+    preferred_tokenizer = _map_dataset_tokenizer_to_superset_key(
+        dataset_tokenizer_name=row.get(suitable_tokenizer_key),
+        tokenizer=tokenizer,
+        suitable_tokenizer_map=suitable_tokenizer_map,
+    )
+
+    try:
+        if preferred_tokenizer == "random":
+            sampled_choice, _ = tokenizer.sample_tokenizer()
+        else:
+            sampled_choice, _ = tokenizer.sample_tokenizer(
+            preferred_tokenizer=preferred_tokenizer,
+            preferred_probability=suitable_tokenizer_probability,
+        )
+        return int(sampled_choice)
+    except TypeError:
+        sampled_choice, _ = tokenizer.sample_tokenizer()
+        return int(sampled_choice)
+    except Exception:
+        return None
+
+
+def _map_dataset_tokenizer_to_superset_key(
+    dataset_tokenizer_name: Any,
+    tokenizer,
+    suitable_tokenizer_map: Dict[str, str],
+) -> Optional[str]:
+    if dataset_tokenizer_name is None:
+        return None
+
+    raw_name = str(dataset_tokenizer_name).strip()
+    if raw_name == "":
+        return None
+
+    lowered_name = raw_name.lower()
+
+    mapped = suitable_tokenizer_map.get(raw_name)
+    if mapped is None:
+        mapped = suitable_tokenizer_map.get(lowered_name)
+
+    candidate_name = mapped if mapped is not None else raw_name
+
+    if not hasattr(tokenizer, "tokenizers") or not isinstance(tokenizer.tokenizers, dict):
+        return candidate_name
+
+    tokenizer_keys = list(tokenizer.tokenizers.keys())
+    if candidate_name in tokenizer.tokenizers:
+        return candidate_name
+
+    lowered_candidate = candidate_name.lower()
+    for key in tokenizer_keys:
+        lowered_key = key.lower()
+        if lowered_key == lowered_candidate:
+            return key
+
+    for key in tokenizer_keys:
+        lowered_key = key.lower()
+        if lowered_key.endswith(f"/{lowered_candidate}"):
+            return key
+        if lowered_candidate.endswith(f"/{lowered_key}"):
+            return key
+
+    return candidate_name
+
+
 def _batch_iterator(args: TrainAnswerOnlyArgs, tokenizer):
     source_names = list(args.data.sources.keys())
     source_weights = _normalize_weights(args.data.sources)
@@ -214,6 +296,13 @@ def _batch_iterator(args: TrainAnswerOnlyArgs, tokenizer):
             while len(batch_inputs) < args.data.batch_size:
                 source = source_names[rng.choice(len(source_names), p=source_weights)]
                 row, _ = next(source_iters[source])
+                tokenizer_choice = _sample_row_tokenizer_choice(
+                    row=row,
+                    tokenizer=tokenizer,
+                    suitable_tokenizer_key=args.data.suitable_tokenizer_key,
+                    suitable_tokenizer_probability=args.data.suitable_tokenizer_probability,
+                    suitable_tokenizer_map=args.data.suitable_tokenizer_map,
+                )
                 example = _build_example(
                     row=row,
                     tokenizer=tokenizer,
@@ -223,6 +312,7 @@ def _batch_iterator(args: TrainAnswerOnlyArgs, tokenizer):
                     text_key=args.data.text_key,
                     question_key=args.data.question_key,
                     answer_key=args.data.answer_key,
+                    tokenizer_choice=tokenizer_choice,
                 )
                 if example is None:
                     continue
