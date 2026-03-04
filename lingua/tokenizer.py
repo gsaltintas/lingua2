@@ -37,7 +37,7 @@ class Tokenizer(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def decode(self, tokens,skip_special_tokens:bool=None):
+    def decode(self, tokens,skip_special_tokens:bool=True):
         pass
 
     @abc.abstractmethod
@@ -94,6 +94,13 @@ class Tokenizer(abc.ABC):
             return token_ids
         return [self.mapping[tid] for tid in token_ids if tid in self.mapping ]
 
+    def decode_from_supermapping(self, tokens: List[int], skip_special_tokens: bool = True) -> str:
+        if len(self.mapping) == 0:
+            return self.decode(tokens, skip_special_tokens=skip_special_tokens)
+        reverse_mapping = {v: k for k, v in self.mapping.items()}
+        token_ids = [reverse_mapping[tid] for tid in tokens if tid in reverse_mapping]
+        return self.decode(token_ids, skip_special_tokens=skip_special_tokens)
+    
 class MockTokenizer(Tokenizer):
     n_words: int = 256
 
@@ -111,7 +118,7 @@ class ByteTokenizer(Tokenizer):
         tokens = [self.bos_id] * add_bos + list(s.encode()) + [self.eos_id] * add_eos
         return tokens
 
-    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=True):
         byte_tokens = bytes([t for t in tokens if t < 256])
         return byte_tokens.decode("utf-8", errors="backslashreplace")
 
@@ -162,7 +169,7 @@ class SentencePieceTokenizer(Tokenizer):
         )
         return tokens
 
-    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=True):
         return self.sp_model.decode(tokens)
 
     def get_token_offsets(
@@ -241,7 +248,7 @@ class TikTokenTokenizer(Tokenizer):
             + [self.eos_id] * add_eos
         )
 
-    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=False):
         return self.tkt_model.decode(tokens)
 
     def get_token_offsets(
@@ -365,9 +372,9 @@ class HFTokenizer(Tokenizer):
             encoded = encoded + [self.eos_id]
         return encoded
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int], skip_special_tokens: bool = None):
         """Convert a list of tokens to a stirng."""
-        return self.hf_tokenizer.decode(tokens)
+        return self.hf_tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
 
     def get_token_offsets(
         self, text: str, tokens: Optional[List[int]] = None
@@ -512,7 +519,7 @@ class TokenMonsterTokenizer(Tokenizer):
             return np.array([], dtype=np.longlong)
         return token_ids.astype(np.longlong)
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: List[int], skip_special_tokens: bool = True):
         return self.tokenizer.decode(tokens)
 
     def get_token_offsets(
@@ -541,10 +548,10 @@ class TekkenTokenizer(Tokenizer):
     def encode(self, s: str, add_bos: bool, add_eos: bool):
         return self.tokenizer.encode(s, add_bos, add_eos)
 
-    def decode(self, tokens: List[int]):
-        if tokens[0] == self.bos_id:
+    def decode(self, tokens: List[int], skip_special_tokens: bool = True):
+        if tokens[0] == self.bos_id and skip_special_tokens:
             tokens = tokens[1:]
-        if tokens[-1] == self.eos_id:
+        if tokens[-1] == self.eos_id and skip_special_tokens:
             tokens = tokens[:-1]
         return self.tokenizer.decode(tokens)
 
@@ -584,6 +591,7 @@ class SupersetTokenizer(Tokenizer):
                 else:
                     logger.info(f"Not loading supermapping for the tokenizer {path}")
                 self.tokenizers[f"{name}/{path}"] = tokenizer
+                logger.info(f"Loaded tokenizer {name} from {path}")
             except Exception as e:
                 logger.error("Error loading tokenizer %s from  %s. %s",path, name, e)
         if len(self.tokenizers) == 0:
@@ -659,7 +667,16 @@ class SupersetTokenizer(Tokenizer):
         # logger.debug(f"Selected tokenizer {tokenizer_key}, length of ids: {len(ids)}, add_bos: {add_bos}, add_eos: {add_eos}")
         return ids
 
-    def decode(self, tokens: List[int],skip_special_tokens:bool=None):
+    def decode(self, tokens: List[int],skip_special_tokens:bool=True, tokenizer_choice: Optional[int] = None):
+        if tokenizer_choice is not None:
+            tokenizer_keys = list(self.tokenizers.keys())
+            if tokenizer_choice >= len(tokenizer_keys):
+                raise ValueError(f"tokenizer_choice {tokenizer_choice} is out of range for available tokenizers {tokenizer_keys}")
+            tokenizer_key = tokenizer_keys[tokenizer_choice]
+        else:
+            tokenizer_choice, tokenizer_key = self.sample_tokenizer()
+        tokenizer = self.tokenizers[tokenizer_key]
+        return tokenizer.decode_from_supermapping(tokens, skip_special_tokens=skip_special_tokens)
         pass
 
     def get_token_offsets(self, text: str, tokens: List[int] | None = None) -> Tuple[List[str] | List[int]]:
