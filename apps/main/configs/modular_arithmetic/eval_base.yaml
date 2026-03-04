@@ -9,11 +9,15 @@ harness:
   log_samples: false
   tasks:
     - modular_arithmetic
+  # limit: 5
 
 generator:
-  max_tokens: 8
+  max_tokens: 256
+  max_gen_len: 8
   dtype: bf16
   add_bos: True
+  until:
+    - </s>
 
 wandb:
   project: moto-modular-arithmetic-evals

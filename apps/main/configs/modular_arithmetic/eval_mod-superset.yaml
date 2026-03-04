@@ -1,3 +1,4 @@
+# python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=sbatch script=apps.main.eval config=["apps/main/configs/modular_arithmetic/eval_mod-superset.yaml"]
 # python -m lingua.stool_ccdb ngpu=1 ncpu=4 mem=64G time=800 nodes=1 gpu_type=l40s launcher=bash script=apps.main.eval config=["apps/main/configs/modular_arithmetic/eval_mod-superset.yaml"]
 # 
 name: "flexitok_modular_arithmetic"
@@ -11,9 +12,10 @@ harness:
     - modular_arithmetic
 
 generator:
-  max_tokens: 8
+  max_tokens: 256
+  max_gen_len: 8
   dtype: bf16
-  add_bos: False
+  add_bos: True
 
 wandb:
   project: moto-modular-arithmetic-evals
