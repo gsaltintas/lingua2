@@ -327,10 +327,13 @@ class PackedCausalTransformerGenerator:
         return out
 
     @torch.inference_mode()
-    def generate(self, prompts, tokenizer_choices: List[int] = None):
+    def generate(self, prompts, tokenizer_choices: Optional[List[int]] = None):
         # Tokenize
         # import code; code.interact(local=locals() | globals())
         if isinstance(self.tokenizer, SupersetTokenizer) and tokenizer_choices:
+            prompts = [self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
+        elif isinstance(self.tokenizer, SupersetTokenizer):
+            tokenizer_choices = [self.tokenizer.sample_tokenizer()[0] for p in prompts]
             prompts = [self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
         else:
             prompts = [

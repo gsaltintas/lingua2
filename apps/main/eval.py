@@ -1,18 +1,21 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
-from collections import defaultdict
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
 import json
 import logging
 import os
+from collections import defaultdict
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
+from typing import Any, List, Optional, Tuple, Union
+
+import torch
+import wandb
+from lm_eval import simple_evaluate
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
-from typing import Any, List, Optional, Tuple, Union
-from lm_eval import simple_evaluate
 from omegaconf import OmegaConf
-import torch
+
 from apps.main.generate import (
     PackedCausalTransformerGenerator,
     PackedCausalTransformerGeneratorArgs,
@@ -26,9 +29,11 @@ from lingua.distributed import (
     DistributedArgs,
     dist_mean_dict,
     get_global_rank,
+    get_is_master,
     get_world_size,
     setup_torch_distributed,
 )
+from lingua.tokenizer import SupersetTokenizer, TokenizerArgs
 
 EVAL_FOLDER_NAME = "{:010d}"
 
@@ -115,7 +120,6 @@ class EvalHarnessLM(LM):
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         prompts, gen_args = zip(*[req.args for req in requests])
-        print(gen_args)
         assert all_dicts_same(gen_args), "Doesn't support different gen args for now"
         gen_args = gen_args[0]
         temperature = gen_args.get("temperature", 0.0)
@@ -132,6 +136,7 @@ class EvalHarnessLM(LM):
         if max_gen_toks is not None:
             self.generator.max_gen_len = int(max_gen_toks)
         try:
+            
             generations, _, _ = self.generator.generate(prompts)
         finally:
             self.generator.max_gen_len = prev_max_gen_len
