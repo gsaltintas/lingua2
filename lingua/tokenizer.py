@@ -645,19 +645,62 @@ class SupersetTokenizer(Tokenizer):
         logger.info(
             "Setting eos_token: %s with id %d.", self.eos_token, self.eos_id
         )
-    def sample_tokenizer(self):
+    def _resolve_tokenizer_choice(self, tokenizer_choice: Optional[Union[int, str]]) -> Optional[int]:
+        if tokenizer_choice is None:
+            return None
+
         tokenizer_keys = list(self.tokenizers.keys())
-        tokenizer_choice = self.rng.choice(len(tokenizer_keys))
+
+        if isinstance(tokenizer_choice, int):
+            if tokenizer_choice < 0 or tokenizer_choice >= len(tokenizer_keys):
+                raise ValueError(
+                    f"tokenizer_choice {tokenizer_choice} is out of range for available tokenizers {tokenizer_keys}"
+                )
+            return tokenizer_choice
+
+        if isinstance(tokenizer_choice, str):
+            if tokenizer_choice in self.tokenizers:
+                return tokenizer_keys.index(tokenizer_choice)
+
+            lowered_choice = tokenizer_choice.strip().lower()
+            for index, key in enumerate(tokenizer_keys):
+                lowered_key = key.lower()
+                if lowered_key == lowered_choice:
+                    return index
+                if lowered_key.endswith(f"/{lowered_choice}"):
+                    return index
+
+            return None
+
+        raise TypeError(
+            f"tokenizer_choice must be int, str or None, got {type(tokenizer_choice).__name__}"
+        )
+
+    def sample_tokenizer(
+        self,
+        preferred_tokenizer: Optional[Union[int, str]] = None,
+        preferred_probability: float = 0.0,
+    ):
+        tokenizer_keys = list(self.tokenizers.keys())
+        if preferred_tokenizer is not None:
+            assert preferred_tokenizer in tokenizer_keys, f"Preferred tokenizer {preferred_tokenizer} not in available tokenizers {tokenizer_keys}"
+        preferred_probability = float(preferred_probability)
+        preferred_probability = max(0.0, min(1.0, preferred_probability))
+        preferred_choice = self._resolve_tokenizer_choice(preferred_tokenizer)
+
+        if preferred_choice is not None and self.rng.random() < preferred_probability:
+            tokenizer_choice = preferred_choice
+        else:
+            tokenizer_choice = int(self.rng.choice(len(tokenizer_keys)))
         return tokenizer_choice, tokenizer_keys[tokenizer_choice]
     
-    def encode(self, tokens, add_bos, add_eos, tokenizer_choice: Optional[int] = None):
-        if tokenizer_choice is not None:
-            tokenizer_keys = list(self.tokenizers.keys())
-            if tokenizer_choice >= len(tokenizer_keys):
-                raise ValueError(f"tokenizer_choice {tokenizer_choice} is out of range for available tokenizers {tokenizer_keys}")
-            tokenizer_key = tokenizer_keys[tokenizer_choice]
+    def encode(self, tokens, add_bos, add_eos, tokenizer_choice: Optional[Union[int, str]] = None):
+        resolved_choice = self._resolve_tokenizer_choice(tokenizer_choice)
+        if resolved_choice is None:
+            resolved_choice, tokenizer_key = self.sample_tokenizer()
         else:
-            tokenizer_choice, tokenizer_key = self.sample_tokenizer()
+            tokenizer_keys = list(self.tokenizers.keys())
+            tokenizer_key = tokenizer_keys[resolved_choice]
         tokenizer = self.tokenizers[tokenizer_key]
         ids = tokenizer.encode_to_supermapping(tokens, add_bos=False, add_eos=False)   
         if add_bos:
@@ -667,14 +710,13 @@ class SupersetTokenizer(Tokenizer):
         # logger.debug(f"Selected tokenizer {tokenizer_key}, length of ids: {len(ids)}, add_bos: {add_bos}, add_eos: {add_eos}")
         return ids
 
-    def decode(self, tokens: List[int],skip_special_tokens:bool=True, tokenizer_choice: Optional[int] = None):
-        if tokenizer_choice is not None:
-            tokenizer_keys = list(self.tokenizers.keys())
-            if tokenizer_choice >= len(tokenizer_keys):
-                raise ValueError(f"tokenizer_choice {tokenizer_choice} is out of range for available tokenizers {tokenizer_keys}")
-            tokenizer_key = tokenizer_keys[tokenizer_choice]
+    def decode(self, tokens: List[int],skip_special_tokens:bool=True, tokenizer_choice: Optional[Union[int, str]] = None):
+        resolved_choice = self._resolve_tokenizer_choice(tokenizer_choice)
+        if resolved_choice is None:
+            resolved_choice, tokenizer_key = self.sample_tokenizer()
         else:
-            tokenizer_choice, tokenizer_key = self.sample_tokenizer()
+            tokenizer_keys = list(self.tokenizers.keys())
+            tokenizer_key = tokenizer_keys[resolved_choice]
         tokenizer = self.tokenizers[tokenizer_key]
         return tokenizer.decode_from_supermapping(tokens, skip_special_tokens=skip_special_tokens)
         pass

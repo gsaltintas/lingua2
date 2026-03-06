@@ -1,7 +1,7 @@
 # # Training superset tokenizer with individual tokenizers trained on Fineweb-2-hq
 # use with apps/main/configs/flexitok/llama_1b_base.yaml
-#  python -m lingua.stool script=apps.main.train config=["/fsx/craffel/lingua/apps/main/configs/flexitok/llama_1b_base.yaml","/fsx/craffel/lingua/apps/main/configs/flexitok/superset_lang_tokenizers_8k.yaml"] 
-#  python -m lingua.stool_ccdb ngpu=1 ncpu=1 nodes=1 launcher=bash script=apps.main.train config=["apps/main/configs/flexitok/llama_1b_base.yaml","apps/main/configs/flexitok/superset_lang_tokenizers_8k.yaml"] 
+#  python -m lingua.stool script=apps.main.train config=["/fsx/craffel/lingua/apps/main/configs/flexitok/llama_1b_base.yaml","/fsx/craffel/lingua/apps/main/configs/flexitok/fineweb_2_hq/superset_lang_tokenizers_8k.yaml"] 
+#  python -m lingua.stool_ccdb ngpu=1 ncpu=1 nodes=1 launcher=bash script=apps.main.train config=["apps/main/configs/flexitok/llama_1b_base.yaml","apps/main/configs/flexitok/fineweb_2_hq/superset_lang_tokenizers_8k.yaml"] 
 
 dump_dir: /fsx/craffel/lingua_logs/fineweb2_hq_superset_lang_tokenizers
 name: flexitok_superset_lang_tokenizers
