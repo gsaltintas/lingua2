@@ -7,7 +7,7 @@ ckpt_dir: /scratch/gsa/train/flexitok_superset_mod_tokenizers/checkpoints/000000
 
 
 harness:
-  log_samples: false
+  log_samples: true
   tasks:
     - modular_arithmetic
 

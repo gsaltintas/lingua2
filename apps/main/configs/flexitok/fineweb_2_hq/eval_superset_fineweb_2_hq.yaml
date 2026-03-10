@@ -4,7 +4,7 @@ ckpt_dir: /fsx/craffel/lingua_logs/fineweb2_hq_superset_lang_tokenizers/checkpoi
 
 
 harness:
-  log_samples: false
+  log_samples: true
   tasks:
     # --- General Reasoning ---
     - arc_easy

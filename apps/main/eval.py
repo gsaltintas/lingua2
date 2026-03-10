@@ -292,9 +292,6 @@ def launch_eval(cfg: EvalArgs):
     config = OmegaConf.load(config)
     # if 
     results = simple_evaluate(wrap, **asdict(cfg.harness))
-    if cfg.harness.log_samples and get_global_rank() == 0:
-        with open(Path(cfg.dump_dir) / "samples.json", "w") as f:
-            json.dump(results.get("samples", []), f)
     val_results =  None
     if cfg.validation:
         val_results = eval_on_val(generator, cfg.validation, train_cfg)
@@ -333,7 +330,9 @@ def launch_eval(cfg: EvalArgs):
                 file=open(val_log_path, mode="a"),
                 flush=True,
             )
-    
+    if cfg.harness.log_samples and get_global_rank() == 0:
+        with open(Path(cfg.dump_dir) / "samples.json", "w") as f:
+            json.dump(results.get("samples", []), f, default=str)
     del generator
 
 
