@@ -254,6 +254,15 @@ def _sample_source_tokenizer_choice(
     if not hasattr(tokenizer, "sample_tokenizer"):
         return None
     raw_key = source_to_tokenizer.get(source) if source is not None else None
+    if raw_key is None:
+        import re
+        ## apply pattern-based matching if direct source match is not found
+        for pattern, pattern_key in source_to_tokenizer.items():
+            if pattern.startswith("regex:"):
+                regex_pattern = pattern[len("regex:") :]
+                if re.match(regex_pattern, source or ""):
+                    raw_key = pattern_key
+                    break
     preferred_tokenizer = _resolve_tokenizer_key(raw_key, tokenizer)
     try:
         if preferred_tokenizer is None or preferred_tokenizer == "random":
@@ -840,6 +849,7 @@ def async_iterator(buffer_size: int, iterator_builder):
 @dataclass
 class OracleRoutingArgs:
     source_to_tokenizer: Dict[str, str] = field(default_factory=dict)
+    task_to_tokenizer: Dict[str, str] = field(default_factory=dict)
     suitable_tokenizer_probability: float = 1.0
 
 
