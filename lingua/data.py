@@ -24,6 +24,9 @@ print_docs=os.environ.get("PRINT_DOCS","False")=="True"
 dump_dir=os.environ.get("DUMP_DIR","/scratch/gsa/data_recreation-dump/")
 logger = logging.getLogger()
 
+dump_docs=os.environ.get("DUMP_DOCS","False")=="True"
+print_docs=os.environ.get("PRINT_DOCS","False")=="True"
+dump_dir=os.environ.get("DUMP_DIR","/scratch/gsa/data_recreation-dump/")
 """
 This file contains all code necessary for text data loading from preshuffled jsonl chunks.
 For example if given the following files with a world size of 8 
