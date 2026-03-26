@@ -43,8 +43,9 @@ optim:
   decay_fraction: 0.1
   exp_factor: 0.5
 
+
 model:
-  dim: 204
+  dim: 2048
   n_layers: 25
   head_dim: null
   n_heads: 16
