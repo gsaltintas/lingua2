@@ -7,6 +7,9 @@ dump_dir: /fsx/craffel/toksuite/lingua_logs/meta-llama-Llama-3.2-1B-seed_777_mod
 seed: 777
 
 
+data:
+  seed: 42
+  
 model:
   seed: 888
 
