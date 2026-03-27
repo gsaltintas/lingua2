@@ -31,17 +31,10 @@ optim:
   lr: 0.001
   weight_decay: 0.1
   epsilon: 1.0e-08
-  beta1: 0.9
-  beta2: 0.95
   clip: 1.0
   scheduler: cosine
   warmup: 2000
   lr_min_ratio: 1.0e-06
-  cycle_length: 1.0
-  cosine_theta: 1.0
-  annealing_step: 1000
-  decay_fraction: 0.1
-  exp_factor: 0.5
 
 
 model:
@@ -49,32 +42,17 @@ model:
   n_layers: 25
   head_dim: null
   n_heads: 16
-  n_kv_heads: null
-  ffn_dim_multiplier: null
-  multiple_of: 256
-  norm_eps: 1.0e-05
-  rope_theta: 10000.0
-  init_base_std: null
-  init_std_factor: disabled
-  max_seqlen: 4096
   seed: 42
   weight_tying: false
-  sliding_window: null
+
 
 distributed:
-  dp_shard: 1
-  dp_replicate: 8
-  tp_size: 1
-  selective_activation_checkpointing: false
-  compile: true
   fsdp_type: full_shard
   model_dtype: bf16
-  float8_recipe: null
-  float8_filter: layers\.[0-9]+\.
   matmul_allow_tf32: false
-  detect_anomaly: false
-  compile_cache_size_limit: 8
-  spawn_method: forkserver
+  selective_activation_checkpointing: false
+  tp_size: 1
+  compile: true
   
 checkpoint:
   dump:
@@ -90,15 +68,14 @@ checkpoint:
 
 profiling:
   run: true
-  trace_folder: profiling
   mem_warmup: 0
   mem_steps: 4
   profile_warmup: 100
   profile_steps: 4
+
 logging:
   freq: 1
-  acc_freq: null
-  wandb: null
+
 async_eval_gpus: 8
 eval:
   harness:
@@ -118,7 +95,7 @@ eval:
     - xnli_en
     - xnli_tr
     - xnli_zh
-    confirm_run_unsafe_code: true
   generator:
     max_tokens: 8192
     dtype: bf16
+    add_bos: False
