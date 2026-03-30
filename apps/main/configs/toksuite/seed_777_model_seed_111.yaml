@@ -19,7 +19,7 @@ checkpoint:
   eval:
     every: 2000
     keep: -1
-  path: /fsx/craffel/toksuite/lingua_logs/meta-llama-Llama-3.2-1B/checkpoints
+  path: /fsx/craffel/toksuite/lingua_logs/meta-llama-Llama-3.2-1B-seed_777_model_seed_111/checkpoints
   init_ckpt_path: 
   load_init_optimizer_state: false
   save_init_ckpt: false
