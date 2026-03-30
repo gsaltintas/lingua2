@@ -372,7 +372,7 @@ class HFTokenizer(Tokenizer):
             encoded = encoded + [self.eos_id]
         return encoded
 
-    def decode(self, tokens: List[int], skip_special_tokens: bool = None):
+    def decode(self, tokens: List[int], skip_special_tokens: bool = True):
         """Convert a list of tokens to a stirng."""
         return self.hf_tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
 
@@ -707,7 +707,7 @@ class SupersetTokenizer(Tokenizer):
             ids = [self.bos_id] + ids
         if add_eos:
             ids = ids + [self.eos_id]
-        # logger.debug(f"Selected tokenizer {tokenizer_key}, length of ids: {len(ids)}, add_bos: {add_bos}, add_eos: {add_eos}")
+        logger.debug(f"Selected tokenizer {tokenizer_key}, for string ({tokens[:40]}) length of ids: {len(ids)}, add_bos: {add_bos}, add_eos: {add_eos}")
         return ids
 
     def decode(self, tokens: List[int],skip_special_tokens:bool=True, tokenizer_choice: Optional[Union[int, str]] = None):
