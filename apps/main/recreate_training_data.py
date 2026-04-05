@@ -149,7 +149,7 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
         torch.backends.cuda.enable_cudnn_sdp(False)
         TOTAL_BYTES = 0
         # tokenizer - shared across all ranks
-        tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path)
+        tokenizer = build_tokenizer(args.data.tokenizer.name, args.data.tokenizer.path, args.data.tokenizer.tokenizers, args.data.tokenizer.dropout, superset_code_name=args.data.tokenizer.superset_code_name, n_words=args.data.tokenizer.n_words)
         validate_train_args(
             args,
             tokenizer.n_words,
@@ -163,18 +163,20 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
         init_signal_handler(set_preemption_flag)  # For handling preemption signals.
         setup_env(args.env)
         logger.info(f"Starting job: {args.name}")
-        if rank is None:
-            print("Distributeeed", args.distributed)
-            setup_torch_distributed(args.distributed)
-            # import os
-            # local_rank = int(os.environ.get("LOCAL_RANK", 0))
-            # torch.cuda.set_device(local_rank)
-            world_mesh = get_device_mesh(args.distributed)
-            logger.info(f"Setup torch distributed.")
-        else:
-            # Setup fake distributed environment
-            world_mesh = setup_fake_distributed(rank, world_size)
-            logger.info(f"Setup fake distributed mesh.")
+        setup_torch_distributed(args.distributed)
+        world_mesh = get_device_mesh(args.distributed)
+        # if rank is None:
+        #     print("Distributeeed", args.distributed)
+        #     setup_torch_distributed(args.distributed)
+        #     # import os
+        #     # local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        #     # torch.cuda.set_device(local_rank)
+        #     world_mesh = get_device_mesh(args.distributed)
+        #     logger.info(f"Setup torch distributed.")
+        # else:
+        #     # Setup fake distributed environment
+        #     world_mesh = setup_fake_distributed(rank, world_size)
+        #     logger.info(f"Setup fake distributed mesh.")
         # Calculate dp_rank and dp_degree exactly like in training
         # build dataloader
         # need dp world size and rank
@@ -194,6 +196,10 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
         curr_sub_file=0
         dump_file = Path(args.dump_dir) / f"train_data_{dp_rank}.{curr_sub_file:02d}-{dp_degree}.jsonl"
         logger.info(f"Dumping training data to {dump_file}")
+
+        bytes_records = []
+        bytes_file = Path(args.dump_dir) / "bytes_log.jsonl"
+        step_bytes = 0
 
         torch.manual_seed(args.seed)
         logger.info("Building model")
@@ -309,6 +315,7 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
         nwords_since_last_log = 0
         time_last_log = timer()
         gc.collect()
+        nbytes_since_last_log = 0
         while train_state.step < args.steps:
             # We constrain train_state.acc_step to be in range 0 to args.grad_acc_steps - 1
             train_state.acc_step += 1
@@ -318,14 +325,16 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
             # curr_lr = float(optimizer.param_groups[0]["lr"])
             data_load_start = timer()
             batch, train_state.data_loader_state = next(data_loader)
+            total_bytes = 0
             if not dump_data and report_bytes:
-                total_bytes = 0
                 examples = batch[:, :, 0]
                 for example in examples:
                     text = tokenizer.decode(example.tolist(), skip_special_tokens=False)
                     nbytes = len(text.encode('utf-8'))
                     total_bytes += nbytes
                     TOTAL_BYTES += nbytes
+                    nbytes_since_last_log += nbytes
+                step_bytes += total_bytes
             logger.info(f"Rank {dp_rank} - Step {train_state.step} acc {train_state.acc_step} -  Total bytes (GB): {TOTAL_BYTES/1e9}")
             if dump_data:
                 batch = torch.tensor(
@@ -356,8 +365,15 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                 with open(dump_file, "a") as f:
                     for item in training_data:
                         f.write(json.dumps(item) + "\n")
-                        written_lines += 1 
+                        written_lines += 1
                 training_data = []
+
+            if report_bytes and every_n_steps(train_state, args.checkpoint.dump.every, acc_step=0):
+                if get_is_master():
+                    with open(bytes_file, "a") as f:
+                        for item in bytes_records:
+                            f.write(json.dumps(item) + "\n")
+                    bytes_records = []
                 if written_lines >= 800000:
                     curr_sub_file += 1
                     dump_file = Path(args.dump_dir) / f"train_data_{dp_rank}.{curr_sub_file:02d}-{dp_degree}.jsonl"
@@ -395,6 +411,12 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                 # scheduler.step()
                 # optimizer.zero_grad()
                 train_state.step += 1
+                if report_bytes:
+                    step_bytes_tensor = torch.tensor(step_bytes, dtype=torch.long, device="cuda")
+                    torch.distributed.all_reduce(step_bytes_tensor, op=torch.distributed.ReduceOp.SUM)
+                    if get_is_master():
+                        bytes_records.append({"step": train_state.step, "bytes": step_bytes_tensor.item()})
+                    step_bytes = 0
                 # if not dump_data:
                 #     print(f"Step {train_state.step}")
             if dump_data:
@@ -455,6 +477,10 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                             # "lr": curr_lr,
                             "total_tokens": total_tokens,
                         },
+                        "nbytes": {
+                            "total": total_bytes,
+                            "current_bytes": nbytes_since_last_log,
+                        },
                         "memory": gpu_mem_stats._asdict(),
                     },
                     sep="/",
@@ -470,6 +496,7 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                 gpu_memory_monitor.reset_peak_stats()
                 nwords_since_last_log = 0
                 time_last_log = timer()
+                source_token_counts = train_state.data_loader_state.get("it_state", {}).get("it_state", {}).get("source_token_counts", {})
                 logger.info(
                     f"step: {train_state.step}"
                     f"  acc: {train_state.acc_step}"
@@ -477,14 +504,21 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
                     # f"  grad: {grad_norm:.2e}"
                     # f"  flops: {FLOPS:.2e}"
                     f"  wps: {wps:.2e}"
+                    f" nbytes: {nbytes_since_last_log:.2e}"
                     # f"  iter: {curr_iter_time:>7}"
                     # f"  data: {data_load_time:>5}"
                     # f"  lr: {curr_lr:.2e}"
                     f"  mem: {gpu_mem_stats.max_active_pct:.0f}%"
                     f"  pow: {gpu_mem_stats.power_draw/1000} W"
                 )
+                if source_token_counts:
+                    total = sum(source_token_counts.values())
+                    logger.info("Source token counts: " + ", ".join(
+                        f"{src}: {cnt:,} ({100*cnt/total:.1f}%)" for src, cnt in sorted(source_token_counts.items())
+                    ))
                 import os
                 print(f"Rank {os.environ.get('RANK')} - Step {train_state.step} acc {train_state.acc_step} - total_tokens: {total_tokens}")
+                print(f"Rank {os.environ.get('RANK')} - Step {train_state.step} acc {train_state.acc_step} - nbytes: {nbytes_since_last_log/1e6:.2e} MB")
 
             saved = False
             # if every_n_steps(
@@ -513,6 +547,10 @@ def recreate_rank_data(args: TrainArgs, rank: int, world_size: int):
     with open(dump_file, "a") as f:
         for item in training_data:
             f.write(json.dumps(item) + "\n")
+    if report_bytes and get_is_master() and bytes_records:
+        with open(bytes_file, "a") as f:
+            for item in bytes_records:
+                f.write(json.dumps(item) + "\n")
     # if not saved:
     #     checkpoint.save(
     #         model,
