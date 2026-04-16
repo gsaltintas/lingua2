@@ -33,6 +33,7 @@ data:
   root_dir: /scratch/craffel/lingua/data/flexitok/
   sources:
     fw_edu: 0.4
+    # eng_Latn: 0.4
     dan_Latn: 0.0216582869670702
     swe_Latn: 0.0216359765418466
     vie_Latn: 0.0197485510268674
@@ -72,6 +73,7 @@ profiling:
   profile_steps: 4
 
 checkpoint:
+  path: /fsx/craffel/lingua_logs/checkpoints/flexitok_llama/
   init_ckpt_path: 
   dump:
     every: 10000
@@ -144,7 +146,6 @@ eval:
       - xnli_en
       - xnli_es
       - xnli_fr
-      - xnli_hi
       - xnli_ru
       - xnli_tr
       - xnli_vi

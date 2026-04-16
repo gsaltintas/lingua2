@@ -305,6 +305,7 @@ def train(args: TrainArgs):
                 load_from_checkpoint(args.checkpoint.init_ckpt_path, model, model_key="model") # Put model_key="" if its directly the model checkpoint
             model.rope_embeddings.reset_parameters() # For RoPe initialization since it's a buffer it might not be loaded
         else:
+            logger.info(f"Model will be initialized from scratch with seed {args.model.seed}")
             with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
                 torch.manual_seed(args.model.seed)
                 model.init_weights()
