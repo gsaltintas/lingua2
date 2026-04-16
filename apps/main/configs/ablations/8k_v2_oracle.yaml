@@ -1,7 +1,7 @@
 # # Training superset tokenizer with individual tokenizers trained on Fineweb-2-hq
 # use with apps/main/configs/flexitok/llama_1b_base.yaml
 #  python -m lingua.stool script=apps.main.train config=["/fsx/craffel/lingua/apps/main/configs/flexitok/llama_1b_base.yaml","apps/main/configs/ablations/8k_v2_oracle.yaml"]
-#  python -m lingua.stool_ccdb ngpu=1 ncpu=1 nodes=1 launcher=bash script=apps.main.train config=["apps/main/configs/flexitok/llama_1b_base.yaml","apps/main/configs/ablations/8k_v2_oracle.yaml"]
+# python -m lingua.stool_ccdb ngpu=1 ncpu=1 nodes=1 launcher=bash script=apps.main.train config=["apps/main/configs/flexitok/llama_1b_base.yaml","apps/main/configs/ablations/8k_v2_oracle.yaml"]
 
 dump_dir: /fsx/craffel/lingua_logs/8k_v2_oracle 
 name: flexitok_8k_v2_oracle
@@ -11,12 +11,14 @@ model:
   #TODO
   vocab_size: 122447
 
+checkpoint:
+  path: /fsx/craffel/lingua_logs/checkpoints/8k_v2_oracle/
 
 data:
   tokenizer:
     name: supertokenizer
     seed: 42
-    superset_code_name: fineweb2_hq
+    superset_code_name: 8k_v2
     #TODO
     n_words: 122447
     
@@ -111,6 +113,3 @@ data:
       tur_Latn: flexitok/bpe_ltr_tur_Latn_8000_v2
       vie_Latn: flexitok/bpe_ltr_vie_Latn_8000_v2
 
-
-checkpoint:
-  path: /fsx/craffel/lingua_logs/checkpoints/8k_v2_oracle/
