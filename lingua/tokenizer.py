@@ -59,10 +59,12 @@ class Tokenizer(abc.ABC):
                 repo_id = path
                 # e.g. fineweb2_hq/flexitok--bpe_arb_Arab_8000_super_mapping.json
                 # import code; code.interact(local=locals()|globals())
+                # 8k_v2/flexitok--bpe_ltr_vie_Latn_8000_v2_super_mapping.json
                 mapping_path = hf_hub.hf_hub_download(
                     repo_id, f"{superset_code_name}/{path.replace('/', '--')}_super_mapping.json"
                 )
                 logger.info(f"Downloaded super mapping from HF Hub {repo_id} to {mapping_path}")
+            # except hf_hub.errors.file
             ## backward compatibility for old path format
             except hf_hub.errors.RepositoryNotFoundError as e:
                 assert os.environ.get("HF_HUB_OFFLINE") != "1"
@@ -723,6 +725,62 @@ class SupersetTokenizer(Tokenizer):
 
     def get_token_offsets(self, text: str, tokens: List[int] | None = None) -> Tuple[List[str] | List[int]]:
         return None, None
+
+def build_token_bytes(tokenizer: "Tokenizer", vocab_size: int) -> Dict[int, int]:
+    """Return a dict mapping token_id -> UTF-8 byte length of its surface form.
+    Special tokens (bos/eos or ~SPECIAL~ surfaces) are omitted (0 bytes → excluded from BPB).
+    """
+    special_ids = {getattr(tokenizer, "bos_id", None), getattr(tokenizer, "eos_id", None)}
+    special_ids.discard(None)
+    result: Dict[int, int] = {}
+
+    if hasattr(tokenizer, "super_vocab"):
+        # SupersetTokenizer: super_vocab is surface_string -> token_id
+        for surface, token_id in tokenizer.super_vocab.items():
+            if token_id >= vocab_size or token_id in special_ids:
+                continue
+            if surface.startswith("~SPECIAL~"):
+                continue
+            nb = len(surface.encode("utf-8"))
+            if nb > 0:
+                result[token_id] = nb
+    elif hasattr(tokenizer, "sp_model"):
+        sp = tokenizer.sp_model
+        for i in range(vocab_size):
+            if i in special_ids:
+                continue
+            piece = sp.id_to_piece(i)
+            nb = len(piece.replace("\u2581", " ").encode("utf-8"))
+            if nb > 0:
+                result[i] = nb
+    elif hasattr(tokenizer, "tkt_model"):
+        for i in range(vocab_size):
+            if i in special_ids:
+                continue
+            try:
+                nb = len(tokenizer.tkt_model.decode_single_token_bytes(i))
+                if nb > 0:
+                    result[i] = nb
+            except Exception:
+                pass
+    elif hasattr(tokenizer, "hf_tokenizer"):
+        for i in range(vocab_size):
+            if i in special_ids:
+                continue
+            try:
+                nb = len(tokenizer.decode([i], skip_special_tokens=False).encode("utf-8"))
+                if nb > 0:
+                    result[i] = nb
+            except Exception:
+                pass
+    else:
+        # ByteTokenizer: tokens 0-255 are exactly one byte each
+        for i in range(min(256, vocab_size)):
+            if i not in special_ids:
+                result[i] = 1
+
+    return result
+
 
 def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None, dropout: float = 0, rng_state: Dict[str, Any] = None, superset_code_name: Optional[str] = None, n_words: Optional[int] = None) -> Tokenizer:
     if name == "bytes":

@@ -3,6 +3,7 @@
 import gc
 import json
 import logging
+import math
 import os
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch.distributed._tensor import DTensor
@@ -51,7 +53,7 @@ from lingua.logger import init_logger
 from lingua.metrics import LoggingArgs, MetricLogger, get_num_params
 from lingua.optim import OptimArgs, build_optimizer
 from lingua.profiling import ProfilerArgs
-from lingua.tokenizer import TokenizerArgs, build_tokenizer
+from lingua.tokenizer import TokenizerArgs, build_token_bytes, build_tokenizer
 
 logger = logging.getLogger()
 
@@ -585,6 +587,11 @@ def train(args: TrainAnswerOnlyArgs):
         
         data_iter = _batch_iterator(args, tokenizer)
 
+        token_bytes_dict = build_token_bytes(tokenizer, tokenizer.n_words)
+        token_bytes_tensor = torch.zeros(tokenizer.n_words, dtype=torch.int64, device="cuda")
+        for tid, nb in token_bytes_dict.items():
+            token_bytes_tensor[tid] = nb
+
         data_loader_state = {
             "start_token": 0,
             "it_state": {},
@@ -637,7 +644,7 @@ def train(args: TrainAnswerOnlyArgs):
             # get batch
             curr_lr = float(optimizer.param_groups[0]["lr"])
             data_load_start = timer()
-            input_ids, labels, source_ids = next(data_iter)
+            input_ids, labels, source_ids, token_bytes = next(data_iter)
             maybe_dump_training_batch(
                 tokenizer,
                 input_ids,
@@ -690,6 +697,15 @@ def train(args: TrainAnswerOnlyArgs):
                 denom = valid.sum().clamp_min(1)
                 corrects = ((preds == labels) & valid).float().sum()
                 token_count = denom.float()
+
+                # BPB: sum nats and bytes only over valid (non-ignored) tokens
+                y1d = labels.reshape(-1)
+                valid1d = valid.reshape(-1)
+                ysafe = torch.where(valid1d, y1d, torch.zeros_like(y1d))
+                nb = torch.where(valid1d, token_bytes_tensor[ysafe], torch.zeros_like(y1d))
+                counted = nb > 0
+                bpb_nats_sum = token_losses.reshape(-1)[counted].sum()
+                bpb_bytes_sum = nb[counted].sum()
 
                 source_stats = None
                 if args.track_source_metrics:
@@ -800,6 +816,15 @@ def train(args: TrainAnswerOnlyArgs):
                 synced_token_count = max(float(synced_metrics["token_count/out"]), 1e-8)
                 synced_metrics["accuracy/out"] = float(synced_metrics["corrects/out"]) / synced_token_count
 
+                # BPB: all_reduce sum nats and bytes across ranks, then divide
+                _bpb_nats = bpb_nats_sum.clone()
+                _bpb_bytes = bpb_bytes_sum.float().clone()
+                if dist.is_initialized() and dist.get_world_size() > 1:
+                    dist.all_reduce(_bpb_nats, op=dist.ReduceOp.SUM)
+                    dist.all_reduce(_bpb_bytes, op=dist.ReduceOp.SUM)
+                total_bytes = float(_bpb_bytes.item())
+                synced_metrics["bpb"] = float(_bpb_nats.item()) / (math.log(2) * total_bytes) if total_bytes > 0 else float("nan")
+
                 if args.track_source_metrics:
                     for source_name in source_names:
                         source_tokens = max(float(synced_metrics[f"sources/{source_name}/token_count"]), 1e-8)
@@ -822,6 +847,7 @@ def train(args: TrainAnswerOnlyArgs):
                     f"step: {train_state.step}"
                     f"  acc: {train_state.acc_step}"
                     f"  loss: {round(loss.item(),4):>7}"
+                    f"  bpb: {metrics['bpb']:.4f}"
                     f"  accuracy: {metrics['accuracy/out']:>7}"
                     f"  grad: {grad_norm:.2e}"
                     f"  flops: {FLOPS:.2e}"
