@@ -2,8 +2,8 @@
 ## Training superset tokenizer with individual tokenizers trained on Fineweb-2-hq
 # use with apps/main/configs/flexitok/llama_1b_base.yaml
 ##TODO: add router details, make sure name is correct
-# python -m lingua.stool script=apps.main.train config=[/fsx/craffel/lingua/apps/main/configs/flexitok/llama_1b_base.yaml,apps/main/configs/ablations/script_1_oracle.yaml]
-# python -m lingua.stool_ccdb ngpu=1 ncpu=1 nodes=1 launcher=bash script=apps.main.train config=[apps/main/configs/flexitok/llama_1b_base.yaml,apps/main/configs/ablations/script_1_oracle.yaml]
+# python -m lingua.stool script=apps.main.train config=[/fsx/craffel/lingua/apps/main/configs/flexitok/llama_1b_base.yaml,apps/main/configs/ablations/script_1_oracle_09.yaml]
+# python -m lingua.stool_ccdb ngpu=1 ncpu=1 nodes=1 launcher=bash script=apps.main.train config=[apps/main/configs/flexitok/llama_1b_base.yaml,apps/main/configs/ablations/script_1_oracle_09.yaml]
 
 model:
   vocab_size: 165022
