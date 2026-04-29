@@ -24,7 +24,12 @@ from apps.main.generate import (
 from apps.main.transformer import LMTransformer, LMTransformerArgs
 from lingua.args import dump_config
 from lingua.checkpoint import CONSOLIDATE_FOLDER, consolidate_checkpoints
-from lingua.data import init_choice_state, setup_sources
+from lingua.data import (
+    OracleRoutingArgs,
+    _sample_source_tokenizer_choice,
+    init_choice_state,
+    setup_sources,
+)
 from lingua.distributed import (
     DistributedArgs,
     dist_mean_dict,
@@ -87,6 +92,7 @@ class EvalArgs:
 
     global_step: Optional[int] = None  # for in-training evaluation
     tokenizer: Optional[TokenizerArgs] = field(default=None)
+    routing: Optional[OracleRoutingArgs] = field(default=None)
 
 
 def all_dicts_same(dict_list):
@@ -110,13 +116,34 @@ class MockAccelerator:
 
 # Light wrapper around generator for lm-eval harness
 class EvalHarnessLM(LM):
-    def __init__(self, generator):
+    def __init__(self, generator, routing: Optional[OracleRoutingArgs] = None):
         super().__init__()
         self.generator = generator
+        self.routing = routing
         self.accelerator = MockAccelerator()
         self._rank = get_global_rank()
         self._world_size = get_world_size()
         self.device = generator.device
+
+    def _get_tokenizer_choices(self, requests: List[Instance]) -> Optional[List[Optional[int]]]:
+        """Return per-request tokenizer choices via oracle routing, or None to use existing logic."""
+        if self.routing is None or not isinstance(self.generator.tokenizer, SupersetTokenizer):
+            return None
+        choices =  [
+            _sample_source_tokenizer_choice(
+                source=getattr(req, "task_name", None),
+                tokenizer=self.generator.tokenizer,
+                source_to_tokenizer=self.routing.task_to_tokenizer,
+                suitable_tokenizer_probability=self.routing.suitable_tokenizer_probability,
+            )
+            for req in requests
+        ]
+        import numpy as np
+        import pandas as pd
+        pairs_choices = pd.DataFrame.from_records([(getattr(req, 'task_name', None), choice) for req, choice in zip(requests, choices)], columns=["task_name", "tok_choice"])
+        pairs_choices = pairs_choices.groupby("task_name").nunique()
+        print(f"Sampled tokenizer choices for requests: \n{pairs_choices.to_string()}")
+        return choices
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         prompts, gen_args = zip(*[req.args for req in requests])
@@ -135,9 +162,9 @@ class EvalHarnessLM(LM):
         prev_max_gen_len = self.generator.max_gen_len
         if max_gen_toks is not None:
             self.generator.max_gen_len = int(max_gen_toks)
+        tokenizer_choices = self._get_tokenizer_choices(requests)
         try:
-            
-            generations, _, _ = self.generator.generate(prompts)
+            generations, _, _ = self.generator.generate(prompts, tokenizer_choices=tokenizer_choices)
         finally:
             self.generator.max_gen_len = prev_max_gen_len
         filtered_gen = []
@@ -148,59 +175,75 @@ class EvalHarnessLM(LM):
         return filtered_gen
 
     def loglikelihood(self, requests: List[Instance]) -> List[Tuple[float, bool]]:
-        # still str 
         prompts, continuations = zip(*[req.args for req in requests])
-        inputs = [req.args[0] + req.args[1] for req in requests]
 
         max_gen_len = self.generator.max_gen_len
-        # We temporarily lower max gen len
         self.generator.max_gen_len = 1
-        if isinstance(self.generator.tokenizer, SupersetTokenizer):
-            processed_prompts = dict()
-            tokenizer_lst = []
-            for i, prompt in enumerate(prompts):
+
+        tokenizer_choices = self._get_tokenizer_choices(requests)
+        tok = self.generator.tokenizer
+        logger.info(f"Tokenizing {len(prompts)} prompts and continuations")
+        if tokenizer_choices is None and isinstance(tok, SupersetTokenizer):
+            # Fallback: random sampling, consistent per unique prompt
+            processed_prompts: dict = {}
+            tokenizer_choices = []
+            for prompt in prompts:
                 if prompt not in processed_prompts:
-                    tokenizer_choice, tokenizer_key = self.generator.tokenizer.sample_tokenizer()
-                    tokenizer_lst.append(tokenizer_choice)
-                    processed_prompts[prompt] = tokenizer_choice
-                else:
-                    tokenizer_lst.append(processed_prompts[prompt])
-            _, lls, greedy = self.generator.generate(inputs, tokenizer_choices=tokenizer_lst)
+                    tc, _ = tok.sample_tokenizer()
+                    processed_prompts[prompt] = tc
+                tokenizer_choices.append(processed_prompts[prompt])
+
+        # Pre-tokenize context and continuation separately to avoid BPE boundary
+        # issues: encode("ctx" + "cont") != encode("ctx") + encode("cont") when
+        # characters at the junction form new BPE merges. Short continuations
+        # (e.g. " A", " B" in ARC Easy) are disproportionately affected.
+        if tokenizer_choices is not None:
+            ctx_toks = [tok.encode(p, add_bos=False, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
+            cont_toks = [tok.encode(c, add_bos=False, add_eos=False, tokenizer_choice=tc) for c, tc in zip(continuations, tokenizer_choices)]
         else:
-            _, lls, greedy = self.generator.generate(inputs)
-        results = []
-        for i,(p, ll, gr) in enumerate(zip(prompts, lls, greedy)):
-            if isinstance(self.generator.tokenizer, SupersetTokenizer):
-                p_len = len(self.generator.tokenizer.encode(p, add_bos=False, add_eos=False, tokenizer_choice=tokenizer_lst[i]))
-            else:
-                p_len = len(self.generator.tokenizer.encode(p, add_bos=False, add_eos=False))
-            results.append((ll[p_len:].sum().item(), gr[p_len:].all().item()))
+            ctx_toks = [tok.encode(p, add_bos=False, add_eos=False) for p in prompts]
+            cont_toks = [tok.encode(c, add_bos=False, add_eos=False) for c in continuations]
+
+        bos = [tok.bos_id] if (self.generator.add_bos and getattr(tok, "bos_id", None) is not None) else []
+        token_inputs = [bos + ctx + cont for ctx, cont in zip(ctx_toks, cont_toks)]
+        p_lens = [len(ctx) for ctx in ctx_toks]
+        # import code; code.interact(local=dict(locals(), **globals()))
+        _, lls, greedy = self.generator.generate(token_inputs)
 
         self.generator.max_gen_len = max_gen_len
+
+        results = []
+        for ll, gr, p_len in zip(lls, greedy, p_lens):
+            if len(ll) <= p_len:
+                logger.warning(f"Loglikelihood for continuation is empty, prompt tokens: {p_len},")
+            results.append((ll[p_len:].sum().item(), gr[p_len:].all().item()))
         return results
 
     def loglikelihood_rolling(self, requests: List[Instance]) -> List[float]:
         prompts = [req.args[0] for req in requests]
         max_gen_len = self.generator.max_gen_len
-        # We temporarily lower max gen len
         self.generator.max_gen_len = 1
-        _, lls, _ = self.generator.generate(prompts)
+        tokenizer_choices = self._get_tokenizer_choices(requests)
+        # import code; code.interact(local=dict(locals(), **globals()))
+        _, lls, _ = self.generator.generate(prompts, tokenizer_choices=tokenizer_choices)
         results = []
         for ll in lls:
-            results.append((ll.sum().item(),))
+            results.append(ll.sum().item())  # (total_loglikelihood)
         self.generator.max_gen_len = max_gen_len
-
         return results
     
 
-def eval_on_val(generator, val_args: ValidationArgs, train_cfg):
+def eval_on_val(generator, val_args: ValidationArgs, train_cfg, routing: Optional[OracleRoutingArgs] = None):
     srcs = {}
+    path_to_source_name = {}
     for src in val_args.sources:
         path = os.path.join(val_args.root_dir, src)
         srcs[path] = 1.0
+        path_to_source_name[path] = src
     for src in train_cfg.data.sources:
         path = os.path.join(train_cfg.data.root_dir, src)
         srcs[path] = 1.0
+        path_to_source_name[path] = src
 
     multi_state = init_choice_state("", srcs, 0, get_global_rank(), get_world_size(), "*.val.jsonl")
     path_to_iter = setup_sources(multi_state)
@@ -219,8 +262,21 @@ def eval_on_val(generator, val_args: ValidationArgs, train_cfg):
                 break
             content_key = "text" if ("text" in content) else "content"
             texts.append(content[content_key])
-        
-        _, loglikelihood, _ = generator.generate(texts)
+
+        tokenizer_choices = None
+        if routing is not None and isinstance(generator.tokenizer, SupersetTokenizer):
+            source_name = path_to_source_name.get(src, src)
+            tc = _sample_source_tokenizer_choice(
+                source=source_name,
+                tokenizer=generator.tokenizer,
+                source_to_tokenizer=routing.source_to_tokenizer,
+                suitable_tokenizer_probability=routing.suitable_tokenizer_probability,
+            )
+            if tc is not None:
+                tokenizer_choices = [tc] * len(texts)
+                logger.info(f"Oracle routing: source '{source_name}' -> tokenizer index {tc}")
+
+        _, loglikelihood, _ = generator.generate(texts, tokenizer_choices=tokenizer_choices)
 
         metrics = defaultdict(list)
         for i, ll in enumerate(loglikelihood):
@@ -286,7 +342,7 @@ def launch_eval(cfg: EvalArgs):
     model.eval()
     generator = PackedCausalTransformerGenerator(cfg.generator, model, tokenizer)
 
-    wrap = EvalHarnessLM(generator)
+    wrap = EvalHarnessLM(generator, routing=cfg.routing)
     ckpt_path = Path(consolidate_path)
     config = ckpt_path / "params.json"
     config = OmegaConf.load(config)
@@ -294,7 +350,7 @@ def launch_eval(cfg: EvalArgs):
     results = simple_evaluate(wrap, **asdict(cfg.harness))
     val_results =  None
     if cfg.validation:
-        val_results = eval_on_val(generator, cfg.validation, train_cfg)
+        val_results = eval_on_val(generator, cfg.validation, train_cfg, routing=cfg.routing)
     if get_global_rank() == 0:
         with open(Path(cfg.dump_dir) / "results.json", "w") as f:
             f.write(json.dumps(results, default=lambda x: str(type(x))))
