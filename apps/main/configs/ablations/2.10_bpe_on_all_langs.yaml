@@ -12,7 +12,7 @@ data:
     path: flexitok/bpe_boundless_coverage_AllL_128000
 
 checkpoint:
-  init_ckpt_path: /fsx/craffel/lingua_logs/checkpoints/bpe_on_all_boundless/
+  path: /fsx/craffel/lingua_logs/checkpoints/bpe_on_all_boundless/
   dump:
     every: 10000
     keep: -1

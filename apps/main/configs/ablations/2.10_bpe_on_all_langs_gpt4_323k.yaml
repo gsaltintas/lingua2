@@ -12,7 +12,7 @@ data:
     path: flexitok/bpe_gpt4_AllL_323000
 
 checkpoint:
-  init_ckpt_path: /fsx/craffel/lingua_logs/checkpoints/bpe_on_all_gpt4_323k/
+  path: /fsx/craffel/lingua_logs/checkpoints/bpe_on_all_gpt4_323k/
   dump:
     every: 10000
     keep: -1
