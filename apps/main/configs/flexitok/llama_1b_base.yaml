@@ -32,8 +32,8 @@ model:
 data:
   root_dir: /scratch/craffel/lingua/data/flexitok/
   sources:
-    fw_edu: 0.4
     # eng_Latn: 0.4
+    fw_edu: 0.4
     dan_Latn: 0.0216582869670702
     swe_Latn: 0.0216359765418466
     vie_Latn: 0.0197485510268674
@@ -84,6 +84,9 @@ checkpoint:
 
 logging:
   freq: 1
+  wandb:
+    project: MoTo-Training
+    entity: raffel-reports
 
 async_eval_gpus: 8
 eval:
