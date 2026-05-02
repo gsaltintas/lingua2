@@ -92,7 +92,7 @@ class EvalArgs:
 
     global_step: Optional[int] = None  # for in-training evaluation
     tokenizer: Optional[TokenizerArgs] = field(default=None)
-    routing: Optional[OracleRoutingArgs] = field(default=None)
+    routing: OracleRoutingArgs = field(default_factory=OracleRoutingArgs)
 
 
 def all_dicts_same(dict_list):
@@ -116,7 +116,7 @@ class MockAccelerator:
 
 # Light wrapper around generator for lm-eval harness
 class EvalHarnessLM(LM):
-    def __init__(self, generator, routing: Optional[OracleRoutingArgs] = None):
+    def __init__(self, generator, routing: OracleRoutingArgs):
         super().__init__()
         self.generator = generator
         self.routing = routing
@@ -127,7 +127,7 @@ class EvalHarnessLM(LM):
 
     def _get_tokenizer_choices(self, requests: List[Instance]) -> Optional[List[Optional[int]]]:
         """Return per-request tokenizer choices via oracle routing, or None to use existing logic."""
-        if self.routing is None or not isinstance(self.generator.tokenizer, SupersetTokenizer):
+        if not self.routing.task_to_tokenizer or not isinstance(self.generator.tokenizer, SupersetTokenizer):
             return None
         choices =  [
             _sample_source_tokenizer_choice(
@@ -264,7 +264,7 @@ def eval_on_val(generator, val_args: ValidationArgs, train_cfg, routing: Optiona
             texts.append(content[content_key])
 
         tokenizer_choices = None
-        if routing is not None and isinstance(generator.tokenizer, SupersetTokenizer):
+        if routing is not None and routing.source_to_tokenizer and isinstance(generator.tokenizer, SupersetTokenizer):
             source_name = path_to_source_name.get(src, src)
             tc = _sample_source_tokenizer_choice(
                 source=source_name,

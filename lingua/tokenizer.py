@@ -551,9 +551,11 @@ class TekkenTokenizer(Tokenizer):
         return self.tokenizer.encode(s, add_bos, add_eos)
 
     def decode(self, tokens: List[int], skip_special_tokens: bool = True):
-        if tokens[0] == self.bos_id and skip_special_tokens:
+        if len(tokens) == 0:
+            return ""
+        if skip_special_tokens and tokens[0] == self.bos_id :
             tokens = tokens[1:]
-        if tokens[-1] == self.eos_id and skip_special_tokens:
+        if skip_special_tokens and tokens[-1] == self.eos_id:
             tokens = tokens[:-1]
         return self.tokenizer.decode(tokens)
 

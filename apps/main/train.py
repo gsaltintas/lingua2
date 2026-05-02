@@ -36,7 +36,12 @@ from apps.main.transformer import (
     get_num_flop_per_token,
     tp_parallelize,
 )
-from lingua.args import dataclass_from_dict, dump_config, flatten_dict
+from lingua.args import (
+    dataclass_from_dict,
+    dataclass_from_dict_relaxed,
+    dump_config,
+    flatten_dict,
+)
 from lingua.checkpoint import (
     CheckpointArgs,
     CheckpointManager,
@@ -578,8 +583,11 @@ def train(args: TrainArgs):
                     EvalArgs,
                     launch_eval,
                 )
-
-                eval_args = dataclass_from_dict(EvalArgs, args.eval)
+                try:
+                    eval_args = dataclass_from_dict(EvalArgs, args.eval)
+                except Exception as e:
+                    logger.warning(f"Error occurred while creating eval args: {e}. Trying relaxed dataclass creation.")
+                    eval_args = dataclass_from_dict_relaxed(EvalArgs, args.eval)
 
                 eval_args.global_step = train_state.step
                 eval_args.ckpt_dir = str(checkpoint.existing_saves[-1])

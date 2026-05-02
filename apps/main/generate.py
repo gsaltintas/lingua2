@@ -328,17 +328,18 @@ class PackedCausalTransformerGenerator:
 
     @torch.inference_mode()
     def generate(self, prompts, tokenizer_choices: Optional[List[int]] = None):
-        # Tokenize
-        # import code; code.interact(local=locals() | globals())
-        if isinstance(self.tokenizer, SupersetTokenizer) and tokenizer_choices:
-            prompts = [self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
-        elif isinstance(self.tokenizer, SupersetTokenizer):
-            tokenizer_choices = [self.tokenizer.sample_tokenizer()[0] for p in prompts]
-            prompts = [self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
-        else:
-            prompts = [
-                self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False) for p in prompts
-            ]
+        # Tokenize (skip if already tokenized — list of list of ints)
+        # import code; code.interact(local=locals()|globals() )
+        if prompts and isinstance(prompts[0], str):
+            if isinstance(self.tokenizer, SupersetTokenizer) and tokenizer_choices:
+                prompts = [self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
+            elif isinstance(self.tokenizer, SupersetTokenizer):
+                tokenizer_choices = [self.tokenizer.sample_tokenizer()[0] for p in prompts]
+                prompts = [self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False, tokenizer_choice=tc) for p, tc in zip(prompts, tokenizer_choices)]
+            else:
+                prompts = [
+                    self.tokenizer.encode(p, add_bos=self.add_bos, add_eos=False) for p in prompts
+                ]
 
         empty_prompt_count = sum(1 for token_ids in prompts if len(token_ids) == 0)
         if empty_prompt_count > 0:
