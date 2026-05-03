@@ -5,7 +5,7 @@ dump_dir: /fsx/craffel/lingua_logs/flexitok_byt5/eval/
 ckpt_dir: /fsx/craffel/lingua_logs/flexitok_byt5/checkpoints/0000100000/
 
 wandb:
-  name: byt5
+  name: ByT5
 
 tokenizer:
   name: huggingface
