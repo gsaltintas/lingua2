@@ -578,44 +578,51 @@ def train(args: TrainArgs):
             if args.eval is not None and every_n_steps(
                 train_state, args.checkpoint.eval.every, acc_step=0
             ):
-                from apps.main.eval import (
+                skip_launch = False
+                try:
+                    from apps.main.eval import (
                     EVAL_FOLDER_NAME,
                     EvalArgs,
                     launch_eval,
                 )
-                try:
-                    eval_args = dataclass_from_dict(EvalArgs, args.eval)
                 except Exception as e:
-                    logger.warning(f"Error occurred while creating eval args: {e}. Trying relaxed dataclass creation.")
-                    eval_args = dataclass_from_dict_relaxed(EvalArgs, args.eval)
+                    skip_launch = True
+                    logger.warning(f"Error occurred while importing eval args: {e}.Skipping eval launch.")
+                if not skip_launch:
+                    try:
+                        eval_args = dataclass_from_dict(EvalArgs, args.eval)
+                    except Exception as e:
+                        logger.warning(f"Error occurred while creating eval args: {e}. Trying relaxed dataclass creation.")
+                        eval_args = dataclass_from_dict_relaxed(EvalArgs, args.eval)
 
-                eval_args.global_step = train_state.step
-                eval_args.ckpt_dir = str(checkpoint.existing_saves[-1])
-                eval_args.dump_dir = str(
-                    os.path.join(
-                        args.dump_dir,
-                        "evals",
-                        EVAL_FOLDER_NAME.format(train_state.step),
-                    )
-                )
-                eval_args.metric_log_dir = args.dump_dir
-                if args.async_eval_gpus is None:
-                    launch_eval(eval_args)
-                elif get_is_master():
-                    if wandb.run is not None and args.logging.wandb is not None:
-                        eval_args.wandb = deepcopy(args.logging.wandb)
-                    assert args.async_eval_gpus > 0
-                    logger.info(f"Launching evals on {args.async_eval_gpus} gpus")
-                    with clean_env():
-                        launch_job(
-                            StoolArgs(
-                                asdict(eval_args),
-                                script="apps.main.eval",
-                                copy_code=False,
-                                nodes=args.async_eval_gpus // 8,
-                                qos="lowest",
-                            )
+                    eval_args.global_step = train_state.step
+                    eval_args.ckpt_dir = str(checkpoint.existing_saves[-1])
+                    eval_args.dump_dir = str(
+                        os.path.join(
+                            args.dump_dir,
+                            "evals",
+                            EVAL_FOLDER_NAME.format(train_state.step),
                         )
+                    )
+                    eval_args.metric_log_dir = args.dump_dir
+                    if args.async_eval_gpus is None:
+                        launch_eval(eval_args)
+                    elif get_is_master():
+                        if wandb.run is not None and args.logging.wandb is not None:
+                            eval_args.wandb = deepcopy(args.logging.wandb)
+                        assert args.async_eval_gpus > 0
+                        logger.info(f"Launching evals on {args.async_eval_gpus} gpus")
+                        # launch_eval(eval_args)
+                        with clean_env():
+                            launch_job(
+                                StoolArgs(
+                                    asdict(eval_args),
+                                    script="apps.main.eval",
+                                    copy_code=False,
+                                    nodes=args.async_eval_gpus // 8,
+                                    qos="lowest",
+                                )
+                            )
 
             if preemption_flag["flag"]:
                 if not saved:
