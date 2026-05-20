@@ -10,7 +10,7 @@ harness:
     - arc_easy
     - xnli_vi
     - toksuite_english
-    - flores200_english
+    - flores200_eng_Latn
 
 generator:
   max_tokens: 2048
