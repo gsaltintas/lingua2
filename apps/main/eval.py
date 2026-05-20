@@ -123,7 +123,7 @@ class EvalHarnessLM(LM):
         self.accelerator = MockAccelerator()
         self._rank = get_global_rank()
         self._world_size = get_world_size()
-        self.device = generator.device
+        # self.device = generator.device
 
     def _get_tokenizer_choices(self, requests: List[Instance]) -> Optional[List[Optional[int]]]:
         """Return per-request tokenizer choices via oracle routing, or None to use existing logic."""

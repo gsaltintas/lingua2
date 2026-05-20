@@ -1,0 +1,19 @@
+# python -m lingua.stool_ccdb ngpu=1 ncpu=1 mem=64G time=800 nodes=1 gpu_type=l40s launcher=bash script=apps.main.eval config=["apps/main/configs/lm-eval-debug.yaml"]
+
+name: debug
+dump_dir: /fsx/craffel/lingua_logs/flexitok_llama/eval/
+ckpt_dir: /fsx/craffel/lingua_logs/flexitok_llama/checkpoints/0000100000/
+
+
+harness:
+  tasks:
+    - arc_easy
+    - xnli_vi
+    - toksuite_english
+    - flores200_english
+
+generator:
+  max_tokens: 2048
+  dtype: bf16
+  add_bos: True
+
