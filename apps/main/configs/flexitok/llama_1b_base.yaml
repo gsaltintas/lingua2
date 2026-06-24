@@ -88,7 +88,7 @@ logging:
     project: MoTo-Training
     entity: raffel-reports
 
-async_eval_gpus: null
+async_eval_gpus: 8
 eval:
   harness:
     tasks:
