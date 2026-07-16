@@ -711,7 +711,7 @@ class SupersetTokenizer(Tokenizer):
             ids = [self.bos_id] + ids
         if add_eos:
             ids = ids + [self.eos_id]
-        logger.debug(f"Selected tokenizer {tokenizer_key}, for string ({tokens[:40]}) length of ids: {len(ids)}, add_bos: {add_bos}, add_eos: {add_eos}")
+        # logger.debug(f"Selected tokenizer {tokenizer_key}, for string ({tokens[:40]}) length of ids: {len(ids)}, add_bos: {add_bos}, add_eos: {add_eos}")
         return ids
 
     def decode(self, tokens: List[int],skip_special_tokens:bool=True, tokenizer_choice: Optional[Union[int, str]] = None):
@@ -727,6 +727,90 @@ class SupersetTokenizer(Tokenizer):
 
     def get_token_offsets(self, text: str, tokens: List[int] | None = None) -> Tuple[List[str] | List[int]]:
         return None, None
+
+class RoutedSuperTokenizer(SupersetTokenizer):
+    """
+    SupersetTokenizer that uses a learned ByteRouter to select the tokenizer.
+
+    The ByteRouter (an nn.Module living on the model's device) is stored here so
+    it is easy to load/save alongside the main model checkpoint.  During data
+    preprocessing the router is not available; use the parent class's
+    sample_tokenizer() instead.  At inference time call encode() normally and
+    the router will decide which tokenizer to use based on the raw bytes.
+
+    Args:
+        tokenizers:         same as SupersetTokenizer
+        router_args:        ByteRouterArgs (imported lazily to avoid a hard torch dep)
+        router_checkpoint:  optional path to a standalone router state-dict (.pt)
+        **kwargs:           forwarded to SupersetTokenizer
+    """
+
+    def __init__(self, tokenizers, router_args=None, router_checkpoint: Optional[str] = None, **kwargs):
+        import torch
+        super().__init__(tokenizers, **kwargs)
+        from lingua.router import ByteRouter, ByteRouterArgs
+
+        tokenizer_names = list(self.tokenizers.keys())
+        if router_args is None:
+            router_args = ByteRouterArgs(n_tokenizers=len(self.tokenizers), tokenizer_names=tokenizer_names)
+        else:
+            if router_args.n_tokenizers != len(self.tokenizers):
+                logger.warning(
+                    "router_args.n_tokenizers (%d) != number of loaded tokenizers (%d); "
+                    "overriding.", router_args.n_tokenizers, len(self.tokenizers)
+                )
+                router_args.n_tokenizers = len(self.tokenizers)
+            router_args.tokenizer_names = tokenizer_names
+
+        # Fix the random init to the tokenizer seed so all dataloader workers
+        # (each of which constructs its own RoutedSuperTokenizer) agree on the
+        # same initial weights before any checkpoint is loaded.
+        seed = kwargs.get("rng_state") if isinstance(kwargs.get("rng_state"), int) else None
+        if seed is None:
+            seed = 42  # matches SupersetTokenizer's default rng seed
+        with torch.random.fork_rng():
+            torch.manual_seed(seed)
+            self.router = ByteRouter(router_args)
+
+        if router_checkpoint is not None:
+            state = torch.load(router_checkpoint, map_location="cpu")
+            self.router.load_state_dict(state)
+            logger.info("Loaded ByteRouter weights from %s", router_checkpoint)
+
+    # ------------------------------------------------------------------
+    # routing helpers
+    # ------------------------------------------------------------------
+
+    def _router_device(self):
+        import torch
+        try:
+            return next(self.router.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
+    def route(self, text: str) -> int:
+        """Return the tokenizer index chosen by the learned router."""
+        return self.router.route_text(text)
+
+    def route_batch(self, texts: list) -> list:
+        """Return tokenizer indices for a list of texts."""
+        return self.router.route_texts(texts)
+
+    # ------------------------------------------------------------------
+    # override encode to use router when the router has been initialised
+    # ------------------------------------------------------------------
+
+    def encode(
+        self,
+        tokens,
+        add_bos: bool,
+        add_eos: bool,
+        tokenizer_choice=None,
+    ):
+        if tokenizer_choice is None:
+            tokenizer_choice = self.route(tokens)
+        return super().encode(tokens, add_bos, add_eos, tokenizer_choice=tokenizer_choice)
+
 
 def build_token_bytes(tokenizer: "Tokenizer", vocab_size: int) -> Dict[int, int]:
     """Return a dict mapping token_id -> UTF-8 byte length of its surface form.
@@ -784,7 +868,7 @@ def build_token_bytes(tokenizer: "Tokenizer", vocab_size: int) -> Dict[int, int]
     return result
 
 
-def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None, dropout: float = 0, rng_state: Dict[str, Any] = None, superset_code_name: Optional[str] = None, n_words: Optional[int] = None) -> Tokenizer:
+def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] = None, tokenizers: Optional[List[Dict[str, str]]]=None, dropout: float = 0, rng_state: Dict[str, Any] = None, superset_code_name: Optional[str] = None, n_words: Optional[int] = None, router_args: Optional[Any] = None, router_checkpoint: Optional[str] = None) -> Tokenizer:
     if name == "bytes":
         return ByteTokenizer()
     elif name == "mock":
@@ -803,5 +887,17 @@ def build_tokenizer(name: str, path: Optional[Union[str, List[Dict[str, str]]]] 
         return TekkenTokenizer()
     elif name == "supertokenizer":
         return SupersetTokenizer(tokenizers, rng_state=rng_state, superset_code_name=superset_code_name, n_words=n_words)
+    elif name == "routed_supertokenizer":
+        from lingua.router import ByteRouterArgs
+        if router_args is not None and not isinstance(router_args, ByteRouterArgs):
+            router_args = ByteRouterArgs(**router_args)
+        return RoutedSuperTokenizer(
+            tokenizers,
+            router_args=router_args,
+            router_checkpoint=router_checkpoint,
+            rng_state=rng_state,
+            superset_code_name=superset_code_name,
+            n_words=n_words,
+        )
     else:
         raise NotImplementedError(f"{name} tokenizer type is not implemented")

@@ -31,7 +31,7 @@ class StoolArgs:
     venv: str = "" # The path to the virtual environment (alternative to anaconda).
     constraint: str = ""  # The constraint on the nodes.
     exclude: str = ""  # The nodes to exclude.
-    time: int = 60000  # The time limit of the job (in minutes).
+    time: int = 1200  # The time limit of the job (in minutes).
     account: str = ""
     qos: str = ""
     partition: str = ""
@@ -50,19 +50,18 @@ SBATCH_COMMAND = """#!/bin/bash
 {constraint}
 #SBATCH --job-name={name}
 #SBATCH --nodes={nodes}
-#SBATCH --ntasks-per-node=1          # crucial - only 1 task per dist per node!
-#SBATCH --gres=gpu:{gpu_type}:{ngpus}
+{sbatch_option}
+####SBATCH --ntasks-per-node=1          # crucial - only 1 task per dist per node!
 #SBATCH --cpus-per-task={ncpu}
 #SBATCH --time={time}
-#SBATCH --mem={mem}
 #SBATCH --qos={priority}
 
-#SBATCH --output=/project/aip-craffel/gsa/.slurm/%j.out
-####SBATCH --output={dump_dir}/logs/%j.stdout
-####SBATCH --error={dump_dir}/logs/%j.stderr
+###SBATCH --output={dump_dir}/logs/%j.stdout
+###SBATCH --error={dump_dir}/logs/%j.stderr
 
 #SBATCH --begin=now+0minutes
-#SBATCH --mail-type=ALL
+###SBATCH --mail-type=ALL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=gulsena.altintas@mail.utoronto.ca
 #SBATCH --requeue
 
@@ -71,6 +70,7 @@ SBATCH_COMMAND = """#!/bin/bash
 echo "Modules loaded"
 echo $(module list)
 
+echo Job output will be written to {dump_dir}/logs/%j.stdout and {dump_dir}/logs/%j.stderr
 # Mimic the effect of "conda init", which doesn't work for scripts
 {activate_command}
 
@@ -87,6 +87,7 @@ if [ -z "$SLURM_NTASKS" ]; then
     export SLURM_NTASKS={tasks}
 fi
 
+echo total tasks $SLURM_NTASKS
 echo $(which python)
 
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
@@ -99,6 +100,13 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 # https://discuss.pytorch.org/t/torch-distributed-init-process-group-hangs-with-4-gpus-with-backend-nccl-but-not-gloo/149061/6
 export NCCL_P2P_DISABLE=1
 # srun --time {time} {log_output} -n {tasks} -N {nodes_per_run} \
+
+# echo srun --nodes {nodes_per_run} --gres=gpu:{gpu_type}:{ngpus}  {log_output} \
+
+echo outputs logged at {log_output}
+
+# vulcan
+# srun --verbose --overlap --gpu-bind=none -n {tasks} {log_output}  \
 
 python -u -m {script} config=$DUMP_DIR/base_config.yaml
 """
@@ -189,6 +197,7 @@ def validate_args(args) -> None:
     assert args.time > 0
 
 def modify_for_ccdb(args: StoolArgs):
+    args.config["dump_dir"] = args.config["dump_dir"].replace("/fsx/craffel/toksuite/lingua_logs", "/scratch/gsa/train")
     args.config["dump_dir"] = args.config["dump_dir"].replace("/fsx/craffel/lingua_logs", "/scratch/gsa/train")
     # import code; code.interact(local=dict(globals(), **locals()))
     if args.config.get("data") is not None:
@@ -200,10 +209,18 @@ def modify_for_ccdb(args: StoolArgs):
             print(tok_args)
             data_conf["tokenizer"] = tok_args
         if data_conf.get("root_dir") is not None:
+            # toksuite
+            data_conf["root_dir"] = args.config["data"]["root_dir"].replace("/scratch/craffel/lingua/data/tokenizer_training", "/scratch/gsa/data/tokenizer_training")
             data_conf["root_dir"] = args.config["data"]["root_dir"].replace("/scratch/craffel/lingua/data", "/scratch/gsa/data")
         args.config["data"] = data_conf 
     if args.config.get("ckpt_dir", None) is not None:
         args.config["ckpt_dir"] = args.config["ckpt_dir"].replace("/fsx/craffel/lingua_logs", "/scratch/gsa/train")
+    if args.config.get("checkpoint", None) is not None:
+        args.config["checkpoint"]["path"] = args.config["checkpoint"].get("path", "").replace("/fsx/craffel/toksuite/lingua_logs", "/scratch/gsa/train")
+        args.config["checkpoint"]["path"] = args.config["checkpoint"].get("path", "").replace("/fsx/craffel/lingua_logs", "/scratch/gsa/train")
+        if args.config["checkpoint"].get("init_ckpt_path", None) is not None:
+            args.config["checkpoint"]["init_ckpt_path"] = args.config["checkpoint"].get("init_ckpt_path", "").replace("/fsx/craffel/toksuite/lingua_logs", "/scratch/gsa/train")
+            args.config["checkpoint"]["init_ckpt_path"] = args.config["checkpoint"].get("init_ckpt_path", "").replace("/fsx/craffel/lingua_logs", "/scratch/gsa/train")
     print(args.config["dump_dir"])
     # print(args.config["data"].get("tokenizer"))
 
@@ -262,18 +279,45 @@ def launch_job(args: StoolArgs):
 
     module_load_command = "module --force purge\n\n"
     if hasattr(args, "host") and args.host == "killarney":
-        module_load_command += "module load slurm/killarney/24.05.7\n"
+        module_load_command += "module load slurm/killarney/25.05.6\n"
     module_load_command += """
 module load   StdEnv/2023  gcc/12.3  openmpi/4.1.5
-module load cuda/12.2                    
-module load nccl/2.18.3                  
+# module load cuda/12.2                
+# module load nccl/2.18.3                  
+# module load python/3.10.13        
+# module load mii/1.1.2 ucx/1.14.1   
+#             
+module load cuda/13.2                   
+module load nccl/2.29.7                 
 module load python/3.10.13        
-module load mii/1.1.2 ucx/1.14.1"""
+module load mii/1.1.2 ucx/1.14.1
+"""
     log_output = (
         "-o $DUMP_DIR/logs/%j_%t.out -e $DUMP_DIR/logs/%j_%t.err"
         if not args.stdout
         else ""
     )
+    sbatch_option = f"""
+#SBATCH --ntasks-per-gpu=1          # crucial - only 1 task per dist per node!
+#SBATCH --gres=gpu:{args.gpu_type}:{args.ngpu}
+#SBATCH --mem={args.mem}
+#SBATCH --output=/project/def-craffel/gsa/.slurm/%j.out
+"""
+    if args.host == "killarney" or args.host.startswith("klogin"):
+        sbatch_option = f"""
+#SBATCH --ntasks-per-node={args.ngpu}        
+#SBATCH --output=/project/aip-craffel/gsa/.slurm/%j.out
+#SBATCH --mem={args.mem}
+#SBATCH --gres=gpu:{args.gpu_type}:{args.ngpu}
+"""
+    elif args.host == "trillium" or args.host.startswith("trig"):
+        sbatch_option = f"""
+#SBATCH --ntasks-per-node=1         
+#SBATCH --gpus-per-node={args.ngpu}
+## no need for mem on trillium, it gives the full GPU/node memory
+#SBATCH --output=/project/def-craffel/gsa/.slurm/%j.out
+"""
+
     sbatch = SBATCH_COMMAND.format(
         name=job_name,
         script=args.script,
@@ -299,6 +343,7 @@ module load mii/1.1.2 ucx/1.14.1"""
         activate_command=activate_command,
         module_load_command=module_load_command,
         gpu_type=args.gpu_type,
+        sbatch_option=sbatch_option
     )
 
     print("Writing sbatch command ...")

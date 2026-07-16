@@ -140,9 +140,10 @@ def validate_args(args) -> None:
         args.exclude = f"#SBATCH --exclude={args.exclude}"
 
     if hasattr(args, "venv") and args.venv:
-        if not args.venv.endswith("/bin/activate"):
-            args.venv = f"{args.venv}/bin/activate"
-        assert os.path.isfile(args.venv), f"Virtual environment not found at {args.venv}"
+        # if not args.venv.endswith("/bin/activate"):
+        #     args.venv = f"{args.venv}/bin/activate"
+        # assert os.path.isfile(args.venv), f"Virtual environment not found at {args.venv}"
+        assert os.path.exists(args.venv), f"Virtual environment not found at {args.venv}"
         args.anaconda = ""  # Ensure anaconda is not used if venv is specified
 
     if hasattr(args, "anaconda") and args.anaconda:
