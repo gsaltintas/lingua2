@@ -38,6 +38,7 @@ from lingua.distributed import (
     get_world_size,
     setup_torch_distributed,
 )
+from lingua.langid import GlotLIDLanguageIdentifier
 from lingua.tokenizer import SupersetTokenizer, TokenizerArgs
 
 EVAL_FOLDER_NAME = "{:010d}"
@@ -123,27 +124,47 @@ class EvalHarnessLM(LM):
         self.accelerator = MockAccelerator()
         self._rank = get_global_rank()
         self._world_size = get_world_size()
+        self._langid = GlotLIDLanguageIdentifier(routing.langid) if routing.langid.enabled else None
         # self.device = generator.device
 
     def _get_tokenizer_choices(self, requests: List[Instance]) -> Optional[List[Optional[int]]]:
         """Return per-request tokenizer choices via oracle routing, or None to use existing logic."""
-        if not self.routing.task_to_tokenizer or not isinstance(self.generator.tokenizer, SupersetTokenizer):
+        if not isinstance(self.generator.tokenizer, SupersetTokenizer):
             return None
-        choices =  [
-            _sample_source_tokenizer_choice(
-                source=getattr(req, "task_name", None),
-                tokenizer=self.generator.tokenizer,
-                source_to_tokenizer=self.routing.task_to_tokenizer,
-                suitable_tokenizer_probability=self.routing.suitable_tokenizer_probability,
-            )
-            for req in requests
-        ]
-        import numpy as np
-        import pandas as pd
-        pairs_choices = pd.DataFrame.from_records([(getattr(req, 'task_name', None), choice) for req, choice in zip(requests, choices)], columns=["task_name", "tok_choice"])
-        pairs_choices = pairs_choices.groupby("task_name").nunique()
-        print(f"Sampled tokenizer choices for requests: \n{pairs_choices.to_string()}")
-        return choices
+        if self.routing.task_to_tokenizer:
+            choices = [
+                _sample_source_tokenizer_choice(
+                    source=getattr(req, "task_name", None),
+                    tokenizer=self.generator.tokenizer,
+                    source_to_tokenizer=self.routing.task_to_tokenizer,
+                    suitable_tokenizer_probability=self.routing.suitable_tokenizer_probability,
+                )
+                for req in requests
+            ]
+            import pandas as pd
+            pairs_choices = pd.DataFrame.from_records([(getattr(req, 'task_name', None), choice) for req, choice in zip(requests, choices)], columns=["task_name", "tok_choice"])
+            pairs_choices = pairs_choices.groupby("task_name").nunique()
+            print(f"Sampled tokenizer choices for requests: \n{pairs_choices.to_string()}")
+            return choices
+
+        if self._langid is not None:
+            predicted_langs = self._langid.predict_batch([req.args[0] for req in requests])
+            choices = [
+                _sample_source_tokenizer_choice(
+                    source=lang,
+                    tokenizer=self.generator.tokenizer,
+                    source_to_tokenizer=self.routing.langid.lang_to_tokenizer,
+                    suitable_tokenizer_probability=self.routing.suitable_tokenizer_probability,
+                )
+                for lang in predicted_langs
+            ]
+            import pandas as pd
+            pairs_choices = pd.DataFrame.from_records(list(zip(predicted_langs, choices)), columns=["predicted_lang", "tok_choice"])
+            pairs_choices = pairs_choices.groupby("predicted_lang").nunique()
+            print(f"LangID-routed tokenizer choices for requests: \n{pairs_choices.to_string()}")
+            return choices
+
+        return None
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         prompts, gen_args = zip(*[req.args for req in requests])
@@ -213,9 +234,9 @@ class EvalHarnessLM(LM):
         self.generator.max_gen_len = max_gen_len
 
         results = []
-        for ll, gr, p_len in zip(lls, greedy, p_lens):
+        for ll, gr, p_len, cont in zip(lls, greedy, p_lens, continuations):
             if len(ll) <= p_len:
-                logger.warning(f"Loglikelihood for continuation is empty, prompt tokens: {p_len},")
+                logger.warning(f"Loglikelihood for continuation is empty, prompt tokens: {p_len}, continuation: {cont!r}")
             results.append((ll[p_len:].sum().item(), gr[p_len:].all().item()))
         return results
 

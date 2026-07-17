@@ -459,7 +459,9 @@ def load_consolidated_model_and_tokenizer(
         config.distributed.model_dtype
     ]
     model_args = dataclass_from_dict(model_args_cls, config.model, strict=False)
-    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path, config.data.tokenizer.tokenizers, config.data.tokenizer.dropout, superset_code_name=config.data.tokenizer.superset_code_name, n_words=config.data.tokenizer.n_words)
+    superset_name = config.data.tokenizer.superset_code_name if hasattr(config.data.tokenizer, 'superset_code_name') else None
+    n_words = config.data.tokenizer.n_words if hasattr(config.data.tokenizer, 'n_words') else None
+    tokenizer = build_tokenizer(config.data.tokenizer.name, config.data.tokenizer.path, config.data.tokenizer.tokenizers, config.data.tokenizer.dropout, superset_code_name=superset_name, n_words=n_words)
     model = model_cls(model_args)
     st_dict = torch.load(ckpt_path / CONSOLIDATE_NAME, weights_only=True)
     model.load_state_dict(st_dict["model"])
