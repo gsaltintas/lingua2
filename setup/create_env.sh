@@ -4,7 +4,7 @@
 #SBATCH --job-name=env_creation
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:8
+#SBATCH --gres=gpu:1
 #SBATCH --exclusive
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=128
@@ -26,7 +26,8 @@ uv venv --python=3.10
 source .venv/bin/activate
 uv pip install torch==2.5.0 xformers --index-url https://download.pytorch.org/whl/cu121
 uv pip install ninja
-uv sync
+# uv sync
+uv pip install -e .
 
 # End timer
 end_time=$(date +%s)
