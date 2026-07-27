@@ -13,6 +13,7 @@ data:
 
 checkpoint:
   init_ckpt_path: /fsx/craffel/lingua_logs/checkpoints/parity_aware_bpe_tr_5k_val_100/
+  path: /fsx/craffel/lingua_logs/checkpoints/parity_aware_bpe_tr_5k_val_100/
   dump:
     every: 10000
     keep: -1
