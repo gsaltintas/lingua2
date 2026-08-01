@@ -10,7 +10,7 @@ grad_acc_steps: 4
 data:
   tokenizer:
     name: huggingface
-    path: flexitok/parity_aware_bpe_tr_500k_val_1000_2_nodes
+    path: flexitok/parity_aware_bpe_tr_500k_val_1000
 
 checkpoint:
   init_ckpt_path: 
