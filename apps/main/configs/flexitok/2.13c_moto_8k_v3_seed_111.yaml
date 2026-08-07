@@ -9,8 +9,8 @@ seed: 111
 
 model:
   vocab_size: 119716
-  seed: 111
-  dim: 64
+  # seed: 111
+  # dim: 64
   
 checkpoint:
   path: /fsx/craffel/lingua_logs/checkpoints/8k_v3_seed_111/
