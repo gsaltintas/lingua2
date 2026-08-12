@@ -89,9 +89,9 @@ echo total tasks $SLURM_NTASKS
 echo $(which python)
 
 # export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
-# export NCCL_SOCKET_IFNAME="eth0" # or "ib0" for InfiniBand
-# export NCCL_DEBUG="INFO"
-# export NCCL_DEBUG_SUBSYS="ALL"
+export NCCL_SOCKET_IFNAME="eth0" # or "ib0" for InfiniBand
+export NCCL_DEBUG="INFO"
+export NCCL_DEBUG_SUBSYS="ALL"
 # export TORCH_DISTRIBUTED_DEBUG="DETAIL"
 
 # otherwise init times out on killarney
@@ -136,8 +136,7 @@ echo "Resolved nodes: $NODES"
 export MASTER_ADDR=$(hostname -I | awk '{{print $1}}')
 FIRST_NODE=$(echo "$NODES" | head -n1)
 export MASTER_ADDR=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$FIRST_NODE" "hostname -I | awk '{{print \$1}}'")
-export MASTER_PORT=$(( 20000 + (SLURM_JOB_ID % 40000) ))
-export MASTER_PORT=1237
+export MASTER_PORT=$(( 20000 + RANDOM % 40000 ))
 
 echo "Master node: $MASTER_ADDR:$MASTER_PORT"
 echo outputs being logged at {log_output}
@@ -150,10 +149,17 @@ set -e
 echo "Running on node \$SLURM_NODEID, rank \$1 \$(hostname)"
 {go_to_code_dir}
 {activate_command}
-# export OMP_NUM_THREADS=1
+export OMP_NUM_THREADS=1
 export DUMP_DIR=$DUMP_DIR
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
-# export NCCL_P2P_DISABLE=1
+export USE_NCCL=1
+export NCCL_P2P_DISABLE=1
+# export NCCL_SOCKET_IFNAME="eth0" # or "ib0" for InfiniBand
+export NCCL_SOCKET_IFNAME="eno16npo"
+export NCCL_DEBUG=INFO
+export NCCL_DEBUG=WARN
+export NCCL_DEBUG_SUBSYS=INIT
+
 torchrun \\
   --nnodes=$SLURM_NNODES \\
   --nproc_per_node={ngpus} \\
@@ -176,7 +182,7 @@ SESSION=train_$SLURM_JOB_ID
 NODE_RANK=0
 for NODE in $NODES; do
     WINDOW=node-$NODE_RANK
-    LOG=$DUMP_DIR/logs/ssh_node-$NODE_RANK.log
+    LOG=$DUMP_DIR/logs/$SLURM_JOB_ID-$NODE_RANK.log
     CMD="ssh -v -o BatchMode=yes -o StrictHostKeyChecking=no $NODE 'bash $DUMP_DIR/run_node.sh $NODE_RANK' 2>&1 | tee $LOG; tmux wait-for -S $WINDOW-done"
     echo $NODE $CMD
     if [ "$NODE_RANK" -eq 0 ]; then
@@ -190,7 +196,7 @@ for NODE in $NODES; do
 done
 
 echo "tmux session '$SESSION' started - attach with: tmux attach -t $SESSION"
-echo "per-node ssh/torchrun logs also written to $DUMP_DIR/logs/ssh_node-*.log"
+echo "per-node ssh/torchrun logs also written to $DUMP_DIR/logs/$SLURM_JOB_ID-*.log"
 
 NODE_RANK=0
 for NODE in $NODES; do
