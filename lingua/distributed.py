@@ -77,6 +77,7 @@ class DistributedArgs:
     compile_cache_size_limit: int = 8
 
     spawn_method: str = "forkserver"
+    reduce_dtype: str = "float32"  # reduce dtype for FSDP mixed precision policy
 
 
 @dataclass
@@ -255,6 +256,7 @@ def setup_torch_distributed(dist_args):
     os.environ["MASTER_PORT"] = str(
         get_master_port(job_id=int(os.environ.get("SLURM_JOB_ID", -1)))
     )
+    logger.info(f"Running on master addr: {os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}")
 
     if get_is_torch_run():
         logger.info(f"Run launched with torchrun, local rank: {local_rank}")
@@ -429,12 +431,15 @@ def parallelize_model(
             assert (
                 device_mesh["dp_shard"].size() == 1
             ), "dp_shard must be 1 for no_shard fsdp_type"
-
+        reduce_dtype = dict(
+            fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16
+        )[distributed_args.reduce_dtype]
         fsdp_config = dict(
             mp_policy=(
                 MixedPrecisionPolicy(
                     param_dtype=param_dtype,
-                    reduce_dtype=torch.float32,
+                    reduce_dtype=reduce_dtype,
+                    # reduce_dtype=torch.float32,
                 )
             ),
             mesh=(
