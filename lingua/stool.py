@@ -33,7 +33,7 @@ class StoolArgs:
     time: int = 8000  # The time limit of the job (in minutes).
     account: str = ""
     qos: str = ""
-    partition: str = "hopper-prod"
+    partition: str = "hopper-atl"
     stdout: bool = False
     priority: str = "normal"
     data_dir: str = "/fsx/craffel/lingua/data/flexitok/"
@@ -220,6 +220,7 @@ def launch_job(args: StoolArgs):
         conda_exe = "source"
         conda_env_path = args.venv
         activate_command = f"source {args.venv}"
+        activate_command = f"source \"$(venv-load {args.venv})\""
     else:
         conda_exe = ""
         conda_env_path = ""
