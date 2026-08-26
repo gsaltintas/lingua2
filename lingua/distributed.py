@@ -77,7 +77,7 @@ class DistributedArgs:
     compile_cache_size_limit: int = 8
 
     spawn_method: str = "forkserver"
-    reduce_dtype: str = "float32"  # reduce dtype for FSDP mixed precision policy
+    reduce_dtype: str = "fp32"  # reduce dtype for FSDP mixed precision policy choose between fp32, fp16, bf16
 
 
 @dataclass
