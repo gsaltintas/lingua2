@@ -28,7 +28,9 @@ class AMDToolArgs:
     anaconda: str = "default"  # The path to the anaconda environment.
     master_addr: str = "127.0.0.1"  # Master address for distributed training
     master_port: int = 29501  # Master port for rendezvous
-    rocm_home: str = "/opt/rocm"  # Path to ROCm installation
+    rocm_home: str = "/opt/rocm/core-7.14"  # Path to ROCm installation
+    extras_home: str = "/opt/rocm/extras-7"  # Path to ROCm extras
+    hsa_override_gfx_version: str = ""  # e.g. "9.4.2" to force gfx942 kernels; empty = native arch
     stdout: bool = False  # Whether to output to stdout or log files
     data_dir: str = "/data/lingua/"  # Local data directory
 
@@ -47,9 +49,11 @@ source activate {conda_env_path}
 # AMD MI300X Configuration
 # --------------------------------------------------------
 export ROCM_HOME={rocm_home}
-export HSA_OVERRIDE_GFX_VERSION=9.4.2
-export LD_LIBRARY_PATH=$ROCM_HOME/lib:$LD_LIBRARY_PATH
-
+export ROCM_PATH={rocm_home}
+export EXTRAS_PATH={extras_home}
+export PATH=$EXTRAS_PATH/bin:$ROCM_PATH/bin:$PATH
+export LD_LIBRARY_PATH=$EXTRAS_PATH/lib:$ROCM_PATH/lib:$ROCM_PATH/lib/llvm/lib:$LD_LIBRARY_PATH
+{hsa_override_line}
 export CUDA_VISIBLE_DEVICES={gpu_ids}
 export HIP_VISIBLE_DEVICES={gpu_ids}
 
@@ -260,6 +264,12 @@ def launch_job(args: AMDToolArgs):
         project_folder=project_folder,
         conda_env_path=conda_env_path,
         rocm_home=args.rocm_home,
+        extras_home=args.extras_home,
+        hsa_override_line=(
+            f"export HSA_OVERRIDE_GFX_VERSION={args.hsa_override_gfx_version}\n"
+            if args.hsa_override_gfx_version
+            else ""
+        ),
         gpu_ids=gpu_ids,
         master_addr=args.master_addr,
         master_port=args.master_port,
