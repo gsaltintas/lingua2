@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterator, Optional, TypedDict
 import numpy as np
 import torch
 
+from lingua.langid import LangIdArgs
 from lingua.tokenizer import TokenizerArgs, build_tokenizer
 
 dump_docs=os.environ.get("DUMP_DOCS","False")=="True"
@@ -118,6 +119,7 @@ class TokenizerState(TypedDict):
     superset_code_name: Optional[str]
     n_words: Optional[int]
     routing: Optional[Dict[str, Any]]   # serialized OracleRoutingArgs
+    source_token_counts: Dict[str, int]  # cumulative token counts per source
 
 
 class PackTokensState(TypedDict):
@@ -312,6 +314,7 @@ def tokenize(
     if rng_state is None:
         rng_state = np.random.default_rng(seed).bit_generator.state
     tokenizer = build_tokenizer(name=tokenizer_type, path=tokenizer_path, tokenizers=tokenizers, dropout=dropout, rng_state=rng_state, superset_code_name=superset_code_name, n_words=n_words)
+    source_token_counts: Dict[str, int] = {}
     for content, state in iterator:
         assert (
             "text" in content or "content" in content
@@ -329,6 +332,27 @@ def tokenize(
             if tokenizer_choice is not None:
                 encode_kwargs["tokenizer_choice"] = tokenizer_choice
         tokens = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos, **encode_kwargs)
+        # if source_token_counts.get("_debug_logged_count", 0) < 5:
+        #     source_token_counts["_debug_logged_count"] = source_token_counts.get("_debug_logged_count", 0) + 1
+        #     decoded = tokenizer.decode(tokens)
+        #     logger.info(
+        #         "TOKENIZE DEBUG sample %d | text: %r | num_tokens: %d | tokens: %s | decoded: %r",
+        #         source_token_counts["_debug_logged_count"], text[:200], len(tokens), tokens[:50], decoded[:200],
+        #     )
+        #     if hasattr(tokenizer, "hf_tokenizer"):
+        #         from tokenizers import Tokenizer as _HFTok
+        #         from tokenizers import pre_tokenizers as _pt
+        #         fixed_hf = _HFTok.from_str(tokenizer.hf_tokenizer.to_str())
+        #         fixed_hf.pre_tokenizer = _pt.Sequence([_pt.Whitespace(), _pt.ByteLevel(use_regex=False)])
+        #         fixed_ids = fixed_hf.encode(text, add_special_tokens=False).ids
+        #         fixed_decoded = fixed_hf.decode(fixed_ids)
+        #         logger.info(
+        #             "TOKENIZE DEBUG (with Whitespace+ByteLevel pre_tokenizer) sample %d | num_tokens: %d | tokens: %s | decoded: %r",
+        #             source_token_counts["_debug_logged_count"], len(fixed_ids), fixed_ids[:50], fixed_decoded[:200],
+        #         )
+        source = content.get("_source")
+        if source is not None:
+            source_token_counts[source] = source_token_counts.get(source, 0) + len(tokens)
         rng_state = None
         if hasattr(tokenizer, "rng"):
             rng_state = tokenizer.rng.bit_generator.state
@@ -345,6 +369,7 @@ def tokenize(
             superset_code_name=superset_code_name,
             n_words=n_words,
             routing=routing,
+            source_token_counts=source_token_counts,
         )
 
 
@@ -695,6 +720,7 @@ def init_state(
         superset_code_name=superset_code_name,
         n_words=n_words,
         routing=routing_dict,
+        source_token_counts={},
     )
     pack_state = PackTokensState(
         start_token=0,
@@ -851,9 +877,14 @@ def async_iterator(buffer_size: int, iterator_builder):
 
 @dataclass
 class OracleRoutingArgs:
-    source_to_tokenizer: Dict[str, str] = field(default_factory=dict)
-    task_to_tokenizer: Dict[str, str] = field(default_factory=dict)
+    # source_to_tokenizer: Dict[str, str] = field(default_factory=lambda: OmegaConf.create({}))
+    # task_to_tokenizer: Dict[str, str] = field(default_factory=lambda: OmegaConf.create({}))
+    source_to_tokenizer: Any = field(default_factory=dict)
+    task_to_tokenizer: Any = field(default_factory=dict)
     suitable_tokenizer_probability: float = 1.0
+    # Fallback used at eval time when task_to_tokenizer has no entry for a request:
+    # predicts the request's language and routes via langid.lang_to_tokenizer.
+    langid: LangIdArgs = field(default_factory=LangIdArgs)
 
 
 @dataclass
