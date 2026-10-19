@@ -150,9 +150,12 @@ def remap_paths(cfg: Any, rcp_root: str) -> Any:
 
 
 def k8s_name(name: str) -> str:
-    # Run:ai job names must be lowercase RFC 1123 labels, keep some room for suffixes
+    # Run:ai job names must be lowercase alphanumerics or '-', start with a letter,
+    # and keep some room for suffixes
     name = re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")
-    return name[:40].strip("-") or "lingua"
+    if not name[:1].isalpha():
+        name = f"j-{name}"
+    return name[:40].strip("-")
 
 
 def validate_args(args: StoolArgs) -> None:
