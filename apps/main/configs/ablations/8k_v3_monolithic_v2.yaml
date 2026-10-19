@@ -16,3 +16,7 @@ data:
     path: flexitok/bpe_ltr_monolithic_moto_v2
 checkpoint:
   path: /fsx/craffel/lingua_logs/checkpoints/8k_v3_monolithic_v2
+  dump:
+    # increase the dump frequency in case of pre-emption
+    every: 1000
+    keep: 3
