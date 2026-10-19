@@ -7,10 +7,10 @@
 
 name: 8k_v3_monolithic_v2
 dump_dir: /fsx/craffel/lingua_logs/8k_v3_monolithic_v2
-# grad_acc_steps: 4
+grad_acc_steps: 4
 
 data:
-  # batch_size: 8
+  batch_size: 8
   tokenizer:
     name: huggingface
     path: flexitok/bpe_ltr_monolithic_moto_v2
